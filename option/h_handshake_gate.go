@@ -2,8 +2,9 @@ package option
 
 import "github.com/sagernet/sing/common/json/badoption"
 
-// HandshakeGateOptions pace the TLS handshakes of the outbounds to one server (address or subnet,
-// and server name): at most max_inflight at a time (3 when 0), min_gap between the starts of two
+// HandshakeGateOptions pace the TLS handshakes of the outbounds to one server (an address or a
+// subnet, whatever the server name; from the TCP connect for the outbounds' TLS dials): at most
+// max_inflight at a time (3 when 0), min_gap between the starts of two and between two ClientHellos
 // (450ms when 0). ipv4_prefix / ipv6_prefix group the addresses of a subnet as one server (32 and
 // 128, one address, when 0). Off unless enabled. See common/tls/h_handshake_gate.go. //H
 type HandshakeGateOptions struct {

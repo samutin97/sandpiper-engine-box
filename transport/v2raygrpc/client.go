@@ -67,6 +67,9 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
 		MinConnectTimeout: 5 * time.Second,
 	}))
 	dialOptions = append(dialOptions, grpc.WithContextDialer(func(ctx context.Context, server string) (net.Conn, error) {
+		if tlsConfig != nil { //H: the TCP connect waits for its turn in the handshake gate
+			return tls.DialForHandshake(ctx, dialer, M.ParseSocksaddr(server)) //H
+		} //H
 		return dialer.DialContext(ctx, N.NetworkTCP, M.ParseSocksaddr(server))
 	}))
 	//nolint:staticcheck

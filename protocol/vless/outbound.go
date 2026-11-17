@@ -241,7 +241,11 @@ func (h *vlessDialer) DialContext(ctx context.Context, network string, destinati
 			}
 		}
 	} else {
-		conn, err = h.dialer.DialContext(ctx, N.NetworkTCP, h.serverAddr)
+		if h.tlsConfig != nil { //H: the TCP connect waits for its turn in the handshake gate
+			conn, err = tls.DialForHandshake(ctx, h.dialer, h.serverAddr) //H
+		} else { //H
+			conn, err = h.dialer.DialContext(ctx, N.NetworkTCP, h.serverAddr)
+		} //H
 		if err == nil && h.tlsConfig != nil {
 			rawConn := conn                                            //H
 			conn, err = tls.ClientHandshake(ctx, rawConn, h.tlsConfig) //H
@@ -341,7 +345,11 @@ func (h *vlessDialer) ListenPacket(ctx context.Context, destination M.Socksaddr)
 	if h.transport != nil {
 		conn, err = h.transport.DialContext(ctx)
 	} else {
-		conn, err = h.dialer.DialContext(ctx, N.NetworkTCP, h.serverAddr)
+		if h.tlsConfig != nil { //H: the TCP connect waits for its turn in the handshake gate
+			conn, err = tls.DialForHandshake(ctx, h.dialer, h.serverAddr) //H
+		} else { //H
+			conn, err = h.dialer.DialContext(ctx, N.NetworkTCP, h.serverAddr)
+		} //H
 		if err == nil && h.tlsConfig != nil {
 			rawConn := conn                                            //H
 			conn, err = tls.ClientHandshake(ctx, rawConn, h.tlsConfig) //H

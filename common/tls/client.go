@@ -157,7 +157,7 @@ func (d *defaultDialer) DialTLSContext(ctx context.Context, destination M.Socksa
 }
 
 func (d *defaultDialer) dialContext(ctx context.Context, destination M.Socksaddr, echRetry bool) (Conn, error) {
-	conn, err := d.dialer.DialContext(ctx, N.NetworkTCP, destination)
+	conn, err := DialForHandshake(ctx, d.dialer, destination) //H: see h_handshake_gate.go
 	if err != nil {
 		return nil, err
 	}

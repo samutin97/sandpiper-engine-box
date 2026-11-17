@@ -336,7 +336,13 @@ func createHTTPClient(dest M.Socksaddr, dialer N.Dialer, options *option.V2RayXH
 	httpVersion := decideHTTPVersion(tlsConfig)
 	var trackConn func(net.Conn) net.Conn //H: set below, once the client exists
 	dialContext := func(ctxInner context.Context) (net.Conn, error) {
-		conn, err := dialer.DialContext(ctxInner, "tcp", dest)
+		var conn net.Conn                           //H
+		var err error                               //H
+		if httpVersion != "3" && tlsConfig != nil { //H: the TCP connect waits for its turn in the handshake gate
+			conn, err = tls.DialForHandshake(ctxInner, dialer, dest) //H
+		} else { //H
+			conn, err = dialer.DialContext(ctxInner, "tcp", dest) //H
+		} //H
 		if err != nil {
 			return nil, err
 		}
