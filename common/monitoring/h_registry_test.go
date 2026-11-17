@@ -145,3 +145,28 @@ func TestH_TouchRestartRefreshesActivity(t *testing.T) {
 	require.True(t, m.workersRunning.Load())
 	require.True(t, m.lastActive.Load().After(stale))
 }
+
+// SP3-04: a reload keeps an outbound tested on demand only (not in the cycles) as the same instance:
+// its old result is shown as waiting, not as working, until it is tested again; an outbound of the
+// cycles keeps its result as it was.
+func TestH_ReloadShowsOnDemandResultsAsWaiting(t *testing.T) {
+	a := &fakeOutbound{tag: "a"}
+	b := &fakeOutbound{tag: "b"}
+	grp := &fakeGroup{fakeOutbound: fakeOutbound{tag: "grp"}, all: []string{"a", "b"}}
+	m := newTestMonitor(t, nil, option.MonitoringOptions{OnDemandTags: []string{"b"}}, a, b, grp)
+	require.NoError(t, htest.Start(m, adapter.StartStateInitialize))
+	setHistory(m, "a", 120, false, nil)
+	setHistory(m, "b", 80, false, nil)
+	m.reg().outbounds["a"].invalid = false
+	m.reg().outbounds["b"].invalid = false
+
+	require.NoError(t, m.Reload())
+
+	require.False(t, m.reg().outbounds["a"].from_cache, "a proxy of the cycles keeps its result")
+	require.False(t, m.getUrlTest("a").IsFromCache)
+	onDemand := m.reg().outbounds["b"]
+	require.Equal(t, uint16(80), onDemand.history.Delay, "the result is kept")
+	require.True(t, onDemand.from_cache, "shown as waiting")
+	require.True(t, m.getUrlTest("b").IsFromCache)
+	require.False(t, onDemand.invalid, "and not tested because of the reload")
+}

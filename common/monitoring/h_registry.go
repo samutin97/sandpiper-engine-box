@@ -33,6 +33,7 @@ func (m *OutboundMonitoring) reg() *monitoringRegistry {
 // subscribers keep receiving its events.
 func (m *OutboundMonitoring) buildRegistry(previous *monitoringRegistry) (*monitoringRegistry, error) {
 	registry := newMonitoringRegistry()
+	var selected map[string]bool // what the groups have selected, read once (SP3-04 below)
 	add := func(outbound adapter.Outbound) {
 		if m.scope.excluded(outbound) { // never tested (exclude_types)
 			return
@@ -45,6 +46,19 @@ func (m *OutboundMonitoring) buildRegistry(previous *monitoringRegistry) (*monit
 			if old.outbound == outbound {
 				state.invalid = old.invalid
 				state.from_cache = old.from_cache
+				// SP3-04: no cycle tests an outbound tested on demand only, so a result it got before
+				// the reload (when it was selected, or asked for) is shown as waiting, like one loaded
+				// at start, until it is tested again; the app listed such old pings as working after a
+				// rebuild of the tunnel. One a group has selected keeps it: it is tested as such.
+				if !state.from_cache && state.history.Delay != 0 && m.scope.onDemand(outbound) {
+					if selected == nil {
+						selected = m.selectedTags()
+					}
+					if !selected[outbound.Tag()] {
+						state.from_cache = true
+						state.history.IpInfoFromCache = state.history.IpInfo != nil
+					}
+				}
 			} else {
 				state.from_cache = state.history.Delay != 0
 				state.history.IpInfoFromCache = state.history.IpInfo != nil
