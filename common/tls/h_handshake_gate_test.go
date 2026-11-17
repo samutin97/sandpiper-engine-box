@@ -270,3 +270,131 @@ func TestH_HandshakeGateFreesUnusedTurns(t *testing.T) {
 	}
 	release()
 }
+
+// A fixed 450 ms gap was the whole pacing: every gap the same, close to the threshold of a DPI
+// rule, and nothing kept a long series from running on. Now each gap is drawn between min_gap and
+// max_gap, and at most window_max handshakes start in any window.
+func TestH_HandshakeGateDrawsTheGap(t *testing.T) {
+	SetHandshakeGate(&option.HandshakeGateOptions{Enabled: true, MaxInflight: 1,
+		MinGap: badoption.Duration(30 * time.Millisecond), MaxGap: badoption.Duration(90 * time.Millisecond)})
+	defer SetHandshakeGate(nil)
+	gate := activeGate.Load()
+	seen := map[time.Duration]bool{}
+	for i := 0; i < 200; i++ {
+		gap := gate.gap()
+		if gap < 30*time.Millisecond || gap > 90*time.Millisecond {
+			t.Fatalf("gap %v outside [30ms, 90ms]", gap)
+		}
+		seen[gap] = true
+	}
+	if len(seen) < 50 {
+		t.Fatalf("only %d different gaps in 200", len(seen))
+	}
+	conn := addrConn{remote: &net.TCPAddr{IP: net.ParseIP("192.0.2.40"), Port: 443}}
+	var starts []time.Time
+	for i := 0; i < 6; i++ {
+		release, err := enterHandshake(context.Background(), conn, "example.com")
+		if err != nil {
+			t.Fatal(err)
+		}
+		starts = append(starts, time.Now())
+		release()
+	}
+	for i := 1; i < len(starts); i++ {
+		if gap := starts[i].Sub(starts[i-1]); gap < 28*time.Millisecond {
+			t.Fatalf("starts %d and %d only %v apart", i-1, i, gap)
+		}
+	}
+	// without max_gap (or below min_gap) the gap is min_gap, as before
+	SetHandshakeGate(&option.HandshakeGateOptions{Enabled: true, MinGap: badoption.Duration(40 * time.Millisecond), MaxGap: badoption.Duration(time.Millisecond)})
+	if gap := activeGate.Load().gap(); gap != 40*time.Millisecond {
+		t.Fatalf("fixed gap %v", gap)
+	}
+	SetHandshakeGate(&option.HandshakeGateOptions{Enabled: true})
+	if gap := activeGate.Load().gap(); gap != DefaultGateMinGap {
+		t.Fatalf("default gap %v", gap)
+	}
+}
+
+func TestH_HandshakeGateWindow(t *testing.T) {
+	SetHandshakeGate(&option.HandshakeGateOptions{Enabled: true, MaxInflight: 1, MinGap: badoption.Duration(10 * time.Millisecond),
+		MaxGap: badoption.Duration(20 * time.Millisecond), Window: badoption.Duration(300 * time.Millisecond), WindowMax: 3})
+	defer SetHandshakeGate(nil)
+	dialer := &gateDialer{remote: &net.TCPAddr{IP: net.ParseIP("192.0.2.41"), Port: 443}}
+	destination := M.ParseSocksaddr("192.0.2.41:443")
+	var access sync.Mutex
+	var hellos []time.Time
+	var wait sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			conn, err := DialForHandshake(context.Background(), dialer, destination)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			release, err := enterHandshake(context.Background(), conn, "example.com")
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			access.Lock()
+			hellos = append(hellos, time.Now())
+			access.Unlock()
+			time.Sleep(5 * time.Millisecond)
+			dialer.open.Add(-1)
+			release()
+		}()
+	}
+	wait.Wait()
+	if dialer.maxOpen.Load() > 1 {
+		t.Fatalf("%d handshakes at once with max_inflight 1", dialer.maxOpen.Load())
+	}
+	sort.Slice(dialer.connects, func(i, j int) bool { return dialer.connects[i].Before(dialer.connects[j]) })
+	// any 4 consecutive connects span at least the window: never 4 in 300 ms
+	for i := 3; i < len(dialer.connects); i++ {
+		if span := dialer.connects[i].Sub(dialer.connects[i-3]); span < 295*time.Millisecond {
+			t.Fatalf("connects %d..%d within %v", i-3, i, span)
+		}
+	}
+	sort.Slice(hellos, func(i, j int) bool { return hellos[i].Before(hellos[j]) })
+	for i := 1; i < len(hellos); i++ {
+		if gap := hellos[i].Sub(hellos[i-1]); gap < 9*time.Millisecond {
+			t.Fatalf("ClientHellos %d and %d only %v apart", i-1, i, gap)
+		}
+	}
+	// another server has a window of its own
+	start := time.Now()
+	other := addrConn{remote: &net.TCPAddr{IP: net.ParseIP("192.0.2.42"), Port: 443}}
+	release, err := enterHandshake(context.Background(), other, "example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	release()
+	if time.Since(start) > 50*time.Millisecond {
+		t.Fatal("a different server waited for the window")
+	}
+}
+
+// A window without a count (or a count without a window) is no limit; a waiting turn ends with
+// its context.
+func TestH_HandshakeGateWindowOffAndCancel(t *testing.T) {
+	SetHandshakeGate(&option.HandshakeGateOptions{Enabled: true, MinGap: badoption.Duration(time.Millisecond), Window: badoption.Duration(time.Hour)})
+	if gate := activeGate.Load(); gate.windowMax != 0 || gate.window != 0 {
+		t.Fatalf("window without a count: %v %d", gate.window, gate.windowMax)
+	}
+	SetHandshakeGate(&option.HandshakeGateOptions{Enabled: true, MinGap: badoption.Duration(time.Millisecond), Window: badoption.Duration(time.Hour), WindowMax: 1})
+	defer SetHandshakeGate(nil)
+	conn := addrConn{remote: &net.TCPAddr{IP: net.ParseIP("192.0.2.43"), Port: 443}}
+	release, err := enterHandshake(context.Background(), conn, "x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	release()
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if _, err := enterHandshake(ctx, conn, "x"); err == nil {
+		t.Fatal("a second handshake within the window of one")
+	}
+}

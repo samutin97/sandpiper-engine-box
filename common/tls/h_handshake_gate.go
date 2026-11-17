@@ -2,6 +2,7 @@ package tls
 
 import (
 	"context"
+	"math/rand/v2"
 	"net"
 	"net/netip"
 	"strings"
@@ -27,11 +28,22 @@ import (
 // gRPC), so a connection waiting for its turn is not left open without a ClientHello: the turn is
 // taken before the connect and kept until the handshake ends. Such a dial is counted by the
 // destination as the outbound gives it (an address, or a domain before it is resolved). Every
-// ClientHello to an address, dialed so or not, also keeps min_gap from the previous one there. //H
+// ClientHello to an address, dialed so or not, also keeps min_gap from the previous one there.
+//
+// With max_gap, each gap is drawn anew between min_gap and max_gap: a fixed rhythm is a pattern of
+// its own, and a margin above the DPI's threshold survives the jitter of a radio network that
+// squeezes two packets together. With window and window_max, no more than window_max handshakes
+// start to a server in any window: the start of the tunnel, a test of every proxy, a reconnection
+// after a network change or a browser through a transport without multiplexing open their
+// connections in a row, which the gaps alone would let run on for as long as there are any; a
+// long-lived multiplexed connection (gRPC, XHTTP, h2) handshakes once and never meets the limit. //H
 
 type handshakeGate struct {
 	maxInflight int
 	minGap      time.Duration
+	maxGap      time.Duration // above minGap: each gap is drawn in [minGap, maxGap]
+	window      time.Duration // with windowMax: at most windowMax turns start in any window
+	windowMax   int
 	prefix4     int
 	prefix6     int
 	access      sync.Mutex
@@ -48,7 +60,10 @@ type gateKey struct {
 type gateState struct {
 	inflight  int
 	lastStart time.Time     // the last turn taken
+	startGap  time.Duration // the gap the next turn keeps from lastStart
 	lastHello time.Time     // the last ClientHello let go
+	helloGap  time.Duration // the gap the next ClientHello keeps from lastHello
+	starts    []time.Time   // the turns taken within the window, oldest first
 	changed   chan struct{} // closed and replaced when a turn ends
 }
 
@@ -82,6 +97,9 @@ func SetHandshakeGate(options *option.HandshakeGateOptions) {
 	gate := &handshakeGate{
 		maxInflight: options.MaxInflight,
 		minGap:      time.Duration(options.MinGap),
+		maxGap:      time.Duration(options.MaxGap),
+		window:      time.Duration(options.Window),
+		windowMax:   options.WindowMax,
 		prefix4:     options.IPv4Prefix,
 		prefix6:     options.IPv6Prefix,
 		servers:     map[gateKey]*gateState{},
@@ -92,6 +110,12 @@ func SetHandshakeGate(options *option.HandshakeGateOptions) {
 	}
 	if gate.minGap <= 0 {
 		gate.minGap = DefaultGateMinGap
+	}
+	if gate.maxGap < gate.minGap {
+		gate.maxGap = gate.minGap
+	}
+	if gate.window <= 0 || gate.windowMax <= 0 {
+		gate.window, gate.windowMax = 0, 0
 	}
 	if gate.prefix4 <= 0 || gate.prefix4 > 32 {
 		gate.prefix4 = 32
@@ -196,16 +220,51 @@ func (g *handshakeGate) state(key gateKey) *gateState {
 	return state
 }
 
-// enter takes a turn of the server: fewer than maxInflight taken, and minGap since the last one.
+// gap is the time between two starts, or two ClientHellos, to one server: minGap, or drawn
+// uniformly in [minGap, maxGap].
+func (g *handshakeGate) gap() time.Duration {
+	if g.maxGap <= g.minGap {
+		return g.minGap
+	}
+	return g.minGap + rand.N(g.maxGap-g.minGap+1)
+}
+
+// windowWait is how long until another turn may start within the window; access must be held.
+func (g *handshakeGate) windowWait(state *gateState, now time.Time) time.Duration {
+	if g.windowMax <= 0 {
+		return 0
+	}
+	kept := state.starts[:0]
+	for _, start := range state.starts {
+		if now.Sub(start) < g.window {
+			kept = append(kept, start)
+		}
+	}
+	state.starts = kept
+	if len(state.starts) < g.windowMax {
+		return 0
+	}
+	return state.starts[0].Add(g.window).Sub(now)
+}
+
+// enter takes a turn of the server: fewer than maxInflight taken, the gap since the last one,
+// and fewer than windowMax in the window.
 func (g *handshakeGate) enter(ctx context.Context, key gateKey) (func(), error) {
 	for {
 		g.access.Lock()
 		state := g.state(key)
 		now := time.Now()
-		wait := g.minGap - now.Sub(state.lastStart)
+		wait := state.startGap - now.Sub(state.lastStart)
+		if windowWait := g.windowWait(state, now); windowWait > wait {
+			wait = windowWait
+		}
 		if state.inflight < g.maxInflight && wait <= 0 {
 			state.inflight++
 			state.lastStart = now
+			state.startGap = g.gap()
+			if g.windowMax > 0 {
+				state.starts = append(state.starts, now)
+			}
 			g.access.Unlock()
 			var once sync.Once
 			return func() { once.Do(func() { g.leave(key) }) }, nil
@@ -219,15 +278,16 @@ func (g *handshakeGate) enter(ctx context.Context, key gateKey) (func(), error) 
 	}
 }
 
-// waitHello waits until minGap passed since the last ClientHello to the server, and counts this one.
+// waitHello waits until the gap passed since the last ClientHello to the server, and counts this one.
 func (g *handshakeGate) waitHello(ctx context.Context, key gateKey) error {
 	for {
 		g.access.Lock()
 		state := g.state(key)
 		now := time.Now()
-		wait := g.minGap - now.Sub(state.lastHello)
+		wait := state.helloGap - now.Sub(state.lastHello)
 		if wait <= 0 {
 			state.lastHello = now
+			state.helloGap = g.gap()
 			g.access.Unlock()
 			return nil
 		}
@@ -258,10 +318,11 @@ func (g *handshakeGate) sleep(ctx context.Context, changed chan struct{}, full b
 	return nil
 }
 
-// sweep forgets the servers without a turn in the last minute; access must be held.
+// sweep forgets the servers without a turn in the last minute (or window); access must be held.
 func (g *handshakeGate) sweep() {
+	idle := max(time.Minute, g.window, g.maxGap)
 	for key, state := range g.servers {
-		if state.inflight <= 0 && time.Since(state.lastStart) > time.Minute && time.Since(state.lastHello) > time.Minute {
+		if state.inflight <= 0 && time.Since(state.lastStart) > idle && time.Since(state.lastHello) > idle {
 			delete(g.servers, key)
 		}
 	}
