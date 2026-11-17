@@ -241,7 +241,7 @@ func (s *RemoteRuleSet) nextRetryDelay() time.Duration {
 func (s *RemoteRuleSet) updateOnce() error {
 	err := s.fetch(s.ctx, false)
 	if err != nil {
-		s.logger.Error("fetch rule-set ", s.tag, ": ", err)
+		//H: logged by the updater, which knows whether it was stopped and when it tries again
 	} else if s.refs.Load() == 0 {
 		s.rules = nil
 	}

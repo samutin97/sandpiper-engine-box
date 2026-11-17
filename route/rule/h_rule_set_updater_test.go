@@ -97,3 +97,37 @@ func TestH_RuleSetUpdaterWaitsForInterval(t *testing.T) {
 	require.False(t, hRunUpdater(t, ruleSet, 100*time.Millisecond))
 	require.Zero(t, hits.Load())
 }
+
+// A fetch cut by a reload (its updater stopped) is not an error, the first failures in a row are
+// warnings with the retry, only a rule set that keeps failing is an error.
+func TestH_RuleSetFetchFailureLevel(t *testing.T) {
+	require.Equal(t, "debug", hFetchFailureLevel(true, 1))
+	require.Equal(t, "debug", hFetchFailureLevel(true, 10))
+	require.Equal(t, "warn", hFetchFailureLevel(false, 1))
+	require.Equal(t, "warn", hFetchFailureLevel(false, hRuleSetFetchWarnings))
+	require.Equal(t, "error", hFetchFailureLevel(false, hRuleSetFetchWarnings+1))
+}
+
+// A fetch cut by a reload: the old updater stops in the middle of it, and the next one (the
+// reloaded service's) fetches the rule set again at once, not after update_interval.
+func TestH_RuleSetFetchedAgainAfterAReload(t *testing.T) {
+	t.Parallel()
+	release := make(chan struct{})
+	var hits atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if hits.Add(1) == 1 {
+			<-release // the first download hangs until the reload
+			return
+		}
+		_, _ = w.Write([]byte(`{"version":4,"rules":[{"domain":["example.org"]}]}`))
+	}))
+	defer server.Close()
+	defer close(release)
+	ruleSet := hUpdaterRuleSet(t, server.URL, time.Time{}, 10*time.Millisecond)
+	first := NewRuleSetUpdater(context.Background(), []adapter.RuleSet{ruleSet})
+	first.Start()
+	require.Eventually(t, func() bool { return hits.Load() == 1 }, 2*time.Second, 5*time.Millisecond)
+	first.Close() // the reload
+	require.True(t, hRunUpdater(t, ruleSet, 2*time.Second), "the next updater fetched again")
+	require.True(t, ruleSet.Match(&adapter.InboundContext{Domain: "example.org"}))
+}
