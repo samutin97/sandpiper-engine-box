@@ -59,7 +59,7 @@ func (r *Router) HijackDNSPacket(ctx context.Context, payload []byte, writer N.P
 	var message mDNS.Msg
 	err := message.Unpack(payload)
 	if err != nil {
-		r.logger.ErrorContext(ctx, E.Cause(err, "process DNS packet: unpack request"))
+		r.logMalformedDNSPacket(ctx, err) //H: see h_dns_malformed.go
 		return
 	}
 	// H: this runs on the packet loop of the TUN (and of the other endpoints), and the process

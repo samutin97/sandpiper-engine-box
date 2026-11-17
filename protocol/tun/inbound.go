@@ -594,6 +594,9 @@ func (t *Inbound) FlushSystemDNSCache() {
 func (t *Inbound) JudgeFlow(network uint8, source netip.AddrPort, destination netip.AddrPort, firstPacket []byte) tun.FlowVerdict {
 	if slices.Contains(t.dnsHijackAddress, destination.Addr()) {
 		if network == uint8(header.UDPProtocolNumber) {
+			if !dnsPacketPort(destination.Port()) { //H: see h_dns_port.go
+				return adapter.JudgeFlow(t.router, adapter.InboundContext{Inbound: t.tag, InboundType: C.TypeTun}, network, source, destination, firstPacket) //H
+			} //H
 			return tun.FlowVerdict{Action: tun.ActionHijackDNS}
 		}
 		return tun.FlowVerdict{Action: tun.ActionAccept}
@@ -666,7 +669,7 @@ func (t *Inbound) NewPacketConnectionEx(ctx context.Context, conn N.PacketConn, 
 	metadata.InboundType = C.TypeTun
 	metadata.Source = source
 	metadata.Destination = destination
-	if t.isDNSHijackDestination(destination) {
+	if t.isDNSHijackDestination(destination) && dnsPacketPort(destination.Port) { //H: see h_dns_port.go
 		metadata.Protocol = C.ProtocolDNS
 	}
 	if metadata.Protocol == C.ProtocolDNS {
