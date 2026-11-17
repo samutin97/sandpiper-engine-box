@@ -87,6 +87,50 @@ func TestH_ReloadTestsChangedOnly(t *testing.T) {
 	m.cycleRunning.Store(false)
 }
 
+// A hot reload creates and starts its new outbounds before it reloads the monitoring: a balancer it
+// adds subscribes to its group from PostStart, while the registry does not have the group yet. It
+// got "group not found" and never followed the tests; now its subscription waits for the reload.
+func TestH_SubscribeGroupBeforeReload(t *testing.T) {
+	a := &fakeOutbound{tag: "a"}
+	m := newTestMonitor(t, nil, option.MonitoringOptions{}, a)
+	require.NoError(t, htest.Start(m, adapter.StartStateInitialize))
+
+	observer, err := m.SubscribeGroup("lowest")
+	require.NoError(t, err, "a group the registry does not have yet")
+	again, err := m.SubscribeGroup("lowest")
+	require.NoError(t, err)
+	require.Len(t, m.pendingGroups, 1, "one waiting observer per group")
+
+	manager := m.outboundManager.(*fakeOutboundManager)
+	manager.list = []adapter.Outbound{a, &fakeGroup{fakeOutbound: fakeOutbound{tag: "lowest"}, all: []string{"a"}}}
+	require.NoError(t, m.Reload())
+	require.Empty(t, m.pendingGroups, "the reload took the observer")
+
+	m.emitGroupEventPriority("lowest", time.Time{})
+	for _, ch := range []<-chan GroupEvent{observer, again} {
+		select {
+		case event := <-ch:
+			require.Equal(t, "lowest", event.GroupTag)
+		case <-time.After(time.Second):
+			t.Fatal("the early subscriber gets the group's events")
+		}
+	}
+	require.NoError(t, m.UnsubscribeGroup("lowest", observer))
+
+	// a group that never comes: the subscription ends with the monitoring
+	never, err := m.SubscribeGroup("never")
+	require.NoError(t, err)
+	require.NoError(t, m.Close())
+	select {
+	case _, ok := <-never:
+		require.False(t, ok)
+	case <-time.After(time.Second):
+		t.Fatal("not closed")
+	}
+	_, err = m.SubscribeGroup("after-close")
+	require.Error(t, err)
+}
+
 // The Touch that restarts the stopped timer workers counts as activity: it used to leave the old
 // time in place, so the next tick stopped them again unless something else had touched since.
 func TestH_TouchRestartRefreshesActivity(t *testing.T) {

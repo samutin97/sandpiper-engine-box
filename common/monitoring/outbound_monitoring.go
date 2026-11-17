@@ -79,6 +79,7 @@ type OutboundMonitoring struct {
 	started          bool
 	urls             []string
 	ipInfoURL        string
+	scope            testScope                 //H: which outbounds are tested, and when (h_scope.go)
 	ipv6Access       sync.Mutex                // H: guards ipv6
 	ipv6             map[string]*ipv6Knowledge // H: what is known of each outbound's IPv6, see h_ipv6.go
 	verifyIPv6       bool                      // H: option.MonitoringOptions.VerifyIPv6
@@ -106,6 +107,8 @@ type OutboundMonitoring struct {
 	// H: outbounds and groups, replaced as a whole when outbounds are hot reloaded
 	registry     atomic.Pointer[monitoringRegistry]
 	reloadAccess sync.Mutex
+	// H: observers of groups subscribed before a registry has them (h_registry.go)
+	pendingGroups map[string]*Broadcaster[GroupEvent] //H
 
 	cacheDirty atomic.Bool
 
@@ -154,8 +157,18 @@ func (m *OutboundMonitoring) retestAll() {
 		return
 	default:
 	}
-	m.logger.Info("network changed, testing every outbound again")
-	for _, state := range m.reg().outbounds {
+	if m.scope.retest == RetestNone { //H
+		return //H
+	} //H
+	var selected map[string]bool          //H
+	if m.scope.retest == RetestSelected { //H
+		selected = m.selectedTags() //H
+	} //H
+	m.logger.Info("network changed, testing again: ", m.scope.retest)
+	for tag, state := range m.reg().outbounds {
+		if m.scope.retest == RetestSelected && !selected[tag] { //H: the others keep their results until their turn
+			continue //H
+		} //H
 		state.mu.Lock()
 		state.invalid = true
 		state.mu.Unlock()
@@ -326,6 +339,7 @@ func NewOutboundMonitoring(ctx context.Context, logger log.ContextLogger, option
 		cancel:          cancel,
 		urls:            cloned,
 		ipInfoURL:       options.IpInfoURL,
+		scope:           newTestScope(options),           //H
 		ipv6:            make(map[string]*ipv6Knowledge), //H
 		verifyIPv6:      options.VerifyIPv6,              //H
 		ipv6Declared:    options.IPv6Declared,            //H
@@ -364,11 +378,10 @@ func (m *OutboundMonitoring) Start(stage adapter.StartStage, scope *adapter.Scop
 	switch stage {
 	case adapter.StartStateInitialize:
 		m.cache = service.FromContext[adapter.CacheFile](m.ctx)
-		registry, err := m.buildRegistry(newMonitoringRegistry())
+		registry, err := m.loadRegistry() //H: built and stored under reloadAccess, as Reload does
 		if err != nil {
 			return err
 		}
-		m.registry.Store(registry)
 		m.logger.Info("registered ", len(registry.outbounds), " outbounds for monitoring")
 		m.logger.Info("registered ", len(registry.groups), " outbound groups for monitoring")
 		m.loadHistory()
@@ -552,13 +565,16 @@ func (m *OutboundMonitoring) SubscribeGroup(groupTag string) (observer <-chan Gr
 		// is coalescing the previous URL-test update.
 		return g.observer.Subscribe(8), nil
 	}
-	return nil, E.New("group not found ", groupTag)
+	return m.subscribePendingGroup(groupTag) //H: a group a hot reload is adding, see h_registry.go
 }
 func (m *OutboundMonitoring) UnsubscribeGroup(groupTag string, observer <-chan GroupEvent) (err error) {
 	if g, ok := m.reg().groups[groupTag]; ok {
 		g.observer.Unsubscribe(observer)
 		return nil
 	}
+	if m.unsubscribePendingGroup(groupTag, observer) { //H
+		return nil //H
+	} //H
 	return E.New("group not found ", groupTag)
 }
 
@@ -579,6 +595,7 @@ func (m *OutboundMonitoring) Close() error {
 				g.observer.Close()
 			}
 		}
+		m.closePendingGroups() //H
 		m.cancel()
 		m.workerWG.Wait()
 		m.schedulerWG.Wait()
@@ -752,7 +769,7 @@ func (m *OutboundMonitoring) tester(parent context.Context, tag string, interim 
 	if m.verifyIPv6 && (out.history.IPv6 == nil || out.history.IPv6FromCache) { //H: once per run, like the IP lookup
 		his.IPv6 = m.verifyIPv6Of(parent, out, m.urls[idx]) //H
 	} //H
-	if out.history.IpInfo == nil || out.history.IpInfoFromCache { //H: until looked up in this run
+	if !m.scope.noIPInfo && (out.history.IpInfo == nil || out.history.IpInfoFromCache) { //H: until looked up in this run; never with disable_ipinfo
 
 		ctx, cancel2 := context.WithTimeout(parent, factor*m.urlTestTimeout) //H
 		defer cancel2()
@@ -971,11 +988,18 @@ func (m *OutboundMonitoring) collectCycleTargets() []string {
 	tags := make([]string, 0, len(m.reg().outbounds))
 
 	delays := make(map[string]uint16, len(tags))
+	var selected map[string]bool        //H
+	if m.scope.hasOnDemand() { //H: only then: a group's Selected may create a lazy outbound
+		selected = m.selectedTags() //H
+	} //H
 
 	for tag, state := range m.reg().outbounds {
 		if _, ok := m.reg().groups[tag]; ok {
 			continue
 		}
+		if m.skipInCycle(tag, state, selected) { //H: on demand only
+			continue //H
+		} //H
 		if m.parked(tag, state) { //H: tested when it is taken out of rest
 			continue //H
 		} //H

@@ -143,6 +143,8 @@ type V2RayGRPCOptions struct {
 	PingTimeout         badoption.Duration `json:"ping_timeout,omitempty"`
 	PermitWithoutStream bool               `json:"permit_without_stream,omitempty"`
 	ForceLite           bool               `json:"-"` // for test
+	// the client's HTTP/2 receive windows, see h_v2ray_grpc_window.go //H
+	V2RayGRPCWindowOptions //H
 }
 
 type V2RayHTTPUpgradeOptions struct {

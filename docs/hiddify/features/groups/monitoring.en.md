@@ -167,6 +167,11 @@ api.my-ip.io: it answers the address and the country only, with no rate limit.
 | `url_test_timeout` | duration | `5s` | Longest time for one test of the cycle, and for one IP information request. |
 | `keep_top` | object | | Use only the fastest few of the lazy outbounds; see [lazy outbounds and keep top](keep-top.en.md). |
 | `on_demand_timeouts` | list of durations | `["1s", "3s", "10s"]` | The marks of a test asked for: unavailable for now at the first with no answer, a failed attempt tried again at each but the last, which is the deadline. The first mark is skipped for an outbound that worked in this run. |
+| `exclude_types` | list of strings | `[]` | Outbound types never tested, for example `direct`, `block`, `dns`: their test would go from the device's own address. |
+| `on_demand_types` | list of strings | `[]` | Outbound types tested only when asked for or while a group has them selected, never in a cycle, for example `awg`, `wireguard`: a UDP handshake beside the TCP proxies each cycle. |
+| `on_demand_tags` | list of strings | `[]` | The same as `on_demand_types`, by outbound tag, whatever the type: for example the proxies that no automatic group uses, or a VLESS over HTTP/3. |
+| `retest_on_network_change` | string | `all` | What a network change tests again: `all`, `selected` (only what the groups have selected) or `none`. |
+| `disable_ipinfo` | bool | `false` | No IP information request after a test. |
 | `idle_timeout` | duration | `10m` | Stop testing after this long with no connections. |
 | `debounce_window` | duration | `500ms` | How long to collect results before groups get an update. |
 

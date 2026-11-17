@@ -11,8 +11,9 @@ type ExperimentalOptions struct {
 	V2RayAPI  *V2RayAPIOptions  `json:"v2ray_api,omitempty"`
 	Debug     *DebugOptions     `json:"debug,omitempty"`
 
-	Monitoring   *MonitoringOptions   `json:"monitoring,omitempty"`    //H
-	UnifiedDelay *UnifiedDelayOptions `json:"unified_delay,omitempty"` //H
+	Monitoring    *MonitoringOptions    `json:"monitoring,omitempty"`     //H
+	UnifiedDelay  *UnifiedDelayOptions  `json:"unified_delay,omitempty"`  //H
+	HandshakeGate *HandshakeGateOptions `json:"handshake_gate,omitempty"` //H: see h_handshake_gate.go
 }
 
 type UnifiedDelayOptions struct { //H

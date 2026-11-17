@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"net"
 	"net/netip"
+	"strings"     //H
 	"sync"        //H
 	"sync/atomic" //H
 	"time"
@@ -46,9 +47,10 @@ type Endpoint struct {
 	tracker   adapter.StatusTracker //H
 	ctx       context.Context
 	// H: see h_interface_update.go //H
-	deviceStarted atomic.Bool  //H
-	bindAccess    sync.Mutex   //H
-	peers         *domainPeers //H: see h_domain_peer.go
+	deviceStarted atomic.Bool     //H
+	bindAccess    sync.Mutex      //H
+	peers         *domainPeers    //H: see h_domain_peer.go
+	keepalives    *keepaliveOnUse //H: see h_keepalive_on_use.go
 }
 
 func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.AwgEndpointOptions) (adapter.Endpoint, error) {
@@ -105,6 +107,7 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
 
 	// H: a peer given by a domain is resolved by the DNS router once the box started, not by the
 	// system resolver here: see h_domain_peer.go //H
+	keepalives := holdKeepalives(&options)                    //H
 	ipcOptions, domainPeers, err := deferDomainPeers(options) //H
 	if err != nil {                                           //H
 		return nil, err //H
@@ -115,7 +118,7 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
 		return nil, err
 	}
 
-	logger.Debug("AWG IPC config:\n", ipc)
+	logger.Debug("AWG IPC config:\n", maskIpcSecrets(ipc)) //H: no keys in the log
 
 	dev, err := awg.NewDevice(ctx, logger, dial, ipc, awg.DeviceOpts{
 		UseIntegratedTun: options.UseIntegratedTun,
@@ -137,7 +140,7 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
 	peerUsers := peeruser.New(common.Map(options.Peers, func(it option.AwgPeerOptions) peeruser.Peer {
 		return peeruser.Peer{User: it.Username, AllowedIPs: it.AllowedIPs}
 	}))
-	return &Endpoint{
+	ep := &Endpoint{ //H
 		Device:    dev,
 		Adapter:   endpoint.NewAdapterWithDialerOptions("awg", tag, []string{N.NetworkTCP, N.NetworkUDP}, options.DialerOptions),
 		address:   options.Address,
@@ -147,10 +150,15 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
 		dnsRouter: service.FromContext[adapter.DNSRouter](ctx),
 		ctx:       ctx,
 		peers:     newDomainPeers(dial, domainPeers, len(options.Peers)), //H
-	}, nil
+	}
+	ep.keepalives = keepalives //H: see h_keepalive_on_use.go
+	return ep, nil             //H
 }
 
 func genIpcConfig(opts option.AwgEndpointOptions, resolvePeer func(domain string) (netip.Addr, error)) (string, error) {
+	if err := checkIpcValues(opts); err != nil { //H
+		return "", err //H
+	} //H
 	privateKeyBytes, err := base64.StdEncoding.DecodeString(opts.PrivateKey)
 	if err != nil {
 		return "", err
@@ -261,8 +269,8 @@ func genIpcConfig(opts option.AwgEndpointOptions, resolvePeer func(domain string
 			}
 			s += "\nendpoint=" + net.JoinHostPort(endpointAddr, format.ToString(peer.Port)) // brackets an IPv6 address
 		}
-		if peer.PersistentKeepaliveInterval != 0 {
-			s += "\npersistent_keepalive_interval=" + format.ToString(peer.PersistentKeepaliveInterval)
+		if keepalive := strings.TrimSpace(string(peer.PersistentKeepaliveInterval)); keepalive != "" && keepalive != "0" { //H: a range too
+			s += "\npersistent_keepalive_interval=" + keepalive //H
 		}
 		for _, allowedIp := range peer.AllowedIPs {
 			s += "\nallowed_ip=" + allowedIp.String()
@@ -295,6 +303,7 @@ func (e *Endpoint) NewPacketConnectionEx(ctx context.Context, conn N.PacketConn,
 }
 
 func (e *Endpoint) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
+	e.useKeepalives() //H
 	switch network {
 	case N.NetworkTCP:
 		e.logger.InfoContext(ctx, "outbound connection to ", destination)
@@ -317,6 +326,7 @@ func (e *Endpoint) DialContext(ctx context.Context, network string, destination 
 // back for the replies, and drops packets to non-IP destinations, which the netstack cannot take:
 // they panicked in gonet.UDPConn.WriteTo (#2569). As the WireGuard endpoint does. //H
 func (e *Endpoint) ListenPacketWithDestination(ctx context.Context, destination M.Socksaddr) (net.PacketConn, netip.Addr, error) { //H
+	e.useKeepalives() //H
 	e.logger.InfoContext(ctx, "outbound packet connection to ", destination)
 	if destination.IsFqdn() {
 		destinationAddresses, err := e.dnsRouter.Lookup(ctx, destination.Fqdn, adapter.DNSQueryOptions{})

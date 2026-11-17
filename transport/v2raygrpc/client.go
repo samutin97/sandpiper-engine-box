@@ -26,7 +26,7 @@ var _ adapter.V2RayClientTransport = (*Client)(nil)
 
 type Client struct {
 	ctx         context.Context
-	cancel      context.CancelFunc //H: ends a dial under way when the client closes
+	dials       atomic.Pointer[dialScope] //H: ends a dial under way when the client closes, see h_close.go
 	dialer      N.Dialer
 	serverAddr  string
 	serviceName string
@@ -56,6 +56,7 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
 			PermitWithoutStream: options.PermitWithoutStream,
 		}))
 	}
+	dialOptions = append(dialOptions, windowDialOptions(options.V2RayGRPCWindowOptions)...) //H: see h_window.go
 	dialOptions = append(dialOptions, grpc.WithConnectParams(grpc.ConnectParams{
 		Backoff: backoff.Config{
 			BaseDelay:  500 * time.Millisecond,
@@ -71,10 +72,8 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
 	//nolint:staticcheck
 	dialOptions = append(dialOptions, grpc.WithReturnConnectionError())
 	serviceName, streamName := grpcname.Names(options.ServiceName) //H
-	ctx, cancel := context.WithCancel(ctx)                         //H
 	return &Client{
 		ctx:         ctx,
-		cancel:      cancel, //H
 		dialer:      dialer,
 		serverAddr:  serverAddr.String(),
 		serviceName: serviceName, //H: Xray's custom paths
@@ -106,7 +105,8 @@ func (c *Client) connect(ctx context.Context) (*grpc.ClientConn, error) {
 		return nil, context.Cause(ctx)
 	}
 	// the context only matters until the dial returns: gRPC ignores it from then on
-	dialCtx, cancelDial := context.WithCancel(c.ctx)      //H
+	dials := c.dialScope()                                //H
+	dialCtx, cancelDial := context.WithCancel(dials.ctx)  //H
 	stopPropagation := context.AfterFunc(ctx, cancelDial) //H
 	//nolint:staticcheck
 	conn, err := grpc.DialContext(dialCtx, c.serverAddr, c.dialOptions...)
@@ -115,7 +115,7 @@ func (c *Client) connect(ctx context.Context) (*grpc.ClientConn, error) {
 	if err != nil {
 		return nil, err
 	}
-	if c.ctx.Err() != nil { //H: closed while it dialed
+	if dials.ctx.Err() != nil { //H: closed while it dialed
 		conn.Close()
 		return nil, net.ErrClosed
 	}
@@ -146,7 +146,7 @@ func (c *Client) DialContext(ctx context.Context) (net.Conn, error) {
 }
 
 func (c *Client) Close() error {
-	c.cancel() //H: a dial still under way has no connection here to close
+	c.endDialScope() //H: a dial still under way has no connection here to close
 	conn := c.conn.Swap(nil)
 	if conn != nil {
 		conn.Close()

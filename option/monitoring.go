@@ -30,6 +30,19 @@ type MonitoringOptions struct {
 	// H: of the lazy outbounds ("lazy": true), use only the fastest few, found a few at a time;
 	// the others rest: not tested, not used by a group, and so never created. See KeepTopOptions.
 	KeepTop *KeepTopOptions `json:"keep_top,omitempty"` //H
+	// H: outbound types never tested (e.g. direct, block, dns: their test goes from the device's
+	// own address). Empty: every outbound, as before.
+	ExcludeTypes badoption.Listable[string] `json:"exclude_types,omitempty"` //H
+	// H: outbound types tested only when asked for or while a group has them selected (e.g. awg,
+	// wireguard: a UDP handshake beside the TCP proxies each cycle). Empty: none.
+	OnDemandTypes badoption.Listable[string] `json:"on_demand_types,omitempty"` //H
+	// H: outbound tags tested the same way as on_demand_types, whatever their type (e.g. the
+	// proxies no automatic group uses, a VLESS over HTTP/3). Empty: none.
+	OnDemandTags badoption.Listable[string] `json:"on_demand_tags,omitempty"` //H
+	// H: what a network change tests again: "all" (default), "selected" or "none".
+	RetestOnNetworkChange string `json:"retest_on_network_change,omitempty"` //H
+	// H: no IP lookup (country, exit address) after a test.
+	DisableIPInfo bool `json:"disable_ipinfo,omitempty"` //H
 }
 
 // KeepTopOptions are the options of keep top (common/monitoring/h_keep_top.go). //H

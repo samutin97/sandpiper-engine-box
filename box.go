@@ -176,6 +176,7 @@ func New(options Options) (*Box, error) {
 	if experimentalOptions.UnifiedDelay != nil && experimentalOptions.UnifiedDelay.Enabled {
 		ctx = urltest.ContextWithIsUnifiedDelay(ctx)
 	}
+	tls.SetHandshakeGate(experimentalOptions.HandshakeGate) //H
 	platformInterface := service.FromContext[adapter.PlatformInterface](ctx)
 	var defaultLogWriter io.Writer
 	if platformInterface != nil {

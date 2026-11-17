@@ -39,6 +39,7 @@ type Inbound struct {
 	server        *http.Server
 	tlsConfig     tls.ServerConfig
 	udpTimeout    time.Duration
+	disableUDP    bool //H
 }
 
 func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.HTTPMixedInboundOptions) (adapter.Inbound, error) {
@@ -54,6 +55,7 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 		logger:        logger,
 		authenticator: auth.NewAuthenticator(options.Users),
 		udpTimeout:    udpTimeout,
+		disableUDP:    options.DisableUDP, //H
 	}
 	inbound.server = http.NewServer(http.ServerOptions{
 		Authenticator: inbound.authenticator,
@@ -129,7 +131,7 @@ func (h *Inbound) NewConnection(ctx context.Context, conn net.Conn, metadata ada
 	handler := adapter.NewUpstreamHandler(metadata, h.newUserConnection, h.streamUserPacketConnection)
 	switch headerBytes[0] {
 	case socks4.Version, socks5.Version:
-		err = socks.HandleConnectionEx(ctx, conn, reader.Reader, h.authenticator, handler, h.listener, h.udpTimeout, metadata.Source, onClose)
+		err = socks.HandleConnectionEx(ctx, conn, reader.Reader, h.authenticator, handler, h.packetListener(), h.udpTimeout, metadata.Source, onClose) //H
 		if err != nil {
 			N.CloseOnHandshakeFailure(conn, onClose, err)
 			if E.IsClosedOrCanceled(err) {

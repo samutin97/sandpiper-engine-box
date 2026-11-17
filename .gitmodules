@@ -24,8 +24,8 @@
 	branch = go
 [submodule "replace/amneziawg-go"]
 	path = replace/amneziawg-go
-	url = https://github.com/hiddify/amneziawg-go.git
-	branch = v5
+	url = https://github.com/samutin97/sandpiper-engine-wire.git
+	branch = hardened
 [submodule "replace/sing-mux"]
 	path = replace/sing-mux
 	url = https://github.com/hiddify/sing-mux.git
@@ -40,5 +40,5 @@
 	branch = hiddify
 [submodule "replace/sing"]
 	path = replace/sing
-	url = https://github.com/hiddify/sing.git
-	branch = v5
+	url = https://github.com/samutin97/sandpiper-engine-base.git
+	branch = hardened

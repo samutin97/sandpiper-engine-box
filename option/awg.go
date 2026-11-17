@@ -24,6 +24,9 @@ type AwgEndpointOptions struct {
 	// MTUDiscovery and FallbackAddress are those of the wireguard endpoint. //H
 	MTUDiscovery    *bool                          `json:"mtu_discovery,omitempty"`    //H: on unless false
 	FallbackAddress badoption.Listable[netip.Addr] `json:"fallback_address,omitempty"` //H
+	// KeepaliveOnUse holds the peers' persistent keepalive back until the endpoint carries its
+	// first connection or test: no handshake at start for an endpoint nobody uses. //H
+	KeepaliveOnUse bool `json:"keepalive_on_use,omitempty"` //H
 }
 
 type AwgOptions struct {
@@ -97,7 +100,7 @@ type AwgPeerOptions struct {
 	PublicKey                   string                           `json:"public_key,omitempty"`
 	PresharedKey                string                           `json:"preshared_key,omitempty"`
 	AllowedIPs                  badoption.Listable[netip.Prefix] `json:"allowed_ips,omitempty"`
-	PersistentKeepaliveInterval uint16                           `json:"persistent_keepalive_interval,omitempty"`
+	PersistentKeepaliveInterval AwgRange                         `json:"persistent_keepalive_interval,omitempty"` //H: seconds, a number or "min-max" (AmneziaWG 3.1)
 	// Reserved are the 3 bytes written into bytes 1–3 of each message, as WARP needs (see
 	// AwgOptions.ReservedMessageTypes).
 	Reserved []uint8 `json:"reserved,omitempty"`

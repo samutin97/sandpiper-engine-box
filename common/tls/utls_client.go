@@ -40,6 +40,7 @@ type UTLSClientConfig struct {
 	spoof                 string
 	spoofMethod           tlsspoof.Method
 	tricks                *tlsTricks //H: tls_tricks
+	classical             bool       //H: utls key_share "classical", see h_utls_keyshare.go
 }
 
 func (c *UTLSClientConfig) ServerName() string {
@@ -120,7 +121,8 @@ func (c *UTLSClientConfig) Clone() Config {
 		recordFragment:        c.recordFragment,
 		spoof:                 c.spoof,
 		spoofMethod:           c.spoofMethod,
-		tricks:                c.tricks, //H
+		tricks:                c.tricks,    //H
+		classical:             c.classical, //H
 	}
 	cloned.SetServerName(cloned.serverName)
 	return cloned
@@ -342,6 +344,9 @@ func newUTLSClient(ctx context.Context, logger logger.ContextLogger, serverAddre
 		spoofMethod:           spoofMethod,
 		tricks:                tricks, //H
 	}
+	if err := setUTLSKeyShare(config.(*UTLSClientConfig), options); err != nil { //H
+		return nil, err //H
+	} //H
 	config.SetServerName(serverName)
 	if options.ECH != nil && options.ECH.Enabled {
 		if options.Reality != nil && options.Reality.Enabled {
@@ -376,9 +381,7 @@ func init() {
 	modernFingerprints := []utls.ClientHelloID{
 		hChromeFingerprint, //H: Chrome 155, as Xray
 		utls.HelloFirefox_Auto,
-		utls.HelloEdge_Auto,
-		utls.HelloSafari_Auto,
-		utls.HelloIOS_Auto,
+		utls.HelloSafari_Auto, //H: no Edge 85 or iOS 14 (2020 hellos without a post-quantum key share, HC-27)
 	}
 	randomFingerprint = modernFingerprints[rand.Intn(len(modernFingerprints))]
 
@@ -394,20 +397,12 @@ func uTLSClientHelloID(name string) (utls.ClientHelloID, error) {
 	switch name {
 	case "chrome_psk", "chrome_psk_shuffle", "chrome_padding_psk_shuffle", "chrome_pq", "chrome_pq_psk":
 		fallthrough
-	case "chrome", "":
+	case "chrome", "", "none", "edge", "360", "qq": //H: "none" (HiddifyPanel) is the default, and edge, 360 and qq are 2020 hellos no browser sends now: Chrome (HC-25, HC-27)
 		return hChromeFingerprint, nil //H: Chrome 155, as Xray
 	case "firefox":
 		return utls.HelloFirefox_Auto, nil
-	case "edge":
-		return utls.HelloEdge_Auto, nil
-	case "safari":
+	case "safari", "ios": //H: iOS 14's hello is of 2020; Safari's is the iPhone's now
 		return utls.HelloSafari_Auto, nil
-	case "360":
-		return utls.Hello360_Auto, nil
-	case "qq":
-		return utls.HelloQQ_Auto, nil
-	case "ios":
-		return utls.HelloIOS_Auto, nil
 	case "android":
 		return utls.HelloAndroid_11_OkHttp, nil
 	case "random":

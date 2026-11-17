@@ -107,14 +107,14 @@ func (c *UTLSClientConfig) hUClient(conn net.Conn, config *utls.Config) (*utls.U
 	padding := c.tricks != nil && c.tricks.padding
 	ech := len(config.EncryptedClientHelloConfigList) > 0
 	randomized := hIsRandomized(c.id)
-	if !padding && !ech && !randomized {
+	if !padding && !ech && !randomized && !c.classical { //H: classical edits the spec
 		return utls.UClient(conn, config, c.id), nil
 	}
 	spec, err := utls.UTLSIdToSpec(c.id)
 	if err != nil {
 		return nil, E.Cause(err, "uTLS fingerprint spec")
 	}
-	if !padding && !randomized && hSpecHasECH(spec) {
+	if !padding && !randomized && !c.classical && hSpecHasECH(spec) {
 		return utls.UClient(conn, config, c.id), nil
 	}
 	if randomized {
@@ -125,6 +125,9 @@ func (c *UTLSClientConfig) hUClient(conn net.Conn, config *utls.Config) (*utls.U
 	}
 	if padding {
 		applyTLSTricksPadding(&spec, c.tricks)
+	}
+	if c.classical { //H: a smaller ClientHello, without X25519MLKEM768
+		removeHybridKeyShareForClient(&spec)
 	}
 	uConn := utls.UClient(conn, config, utls.HelloCustom)
 	err = uConn.ApplyPreset(&spec)

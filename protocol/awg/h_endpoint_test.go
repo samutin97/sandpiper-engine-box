@@ -55,7 +55,7 @@ func TestH_GenIpcConfigFullTranslation(t *testing.T) {
 			PublicKey:                   peerKey.String(),
 			PresharedKey:                presharedKey.String(),
 			AllowedIPs:                  badoption.Listable[netip.Prefix]{netip.MustParsePrefix("0.0.0.0/0"), netip.MustParsePrefix("::/0")},
-			PersistentKeepaliveInterval: 25,
+			PersistentKeepaliveInterval: "25",
 		}},
 	}
 	ipc, err := genIpcConfig(options, nil)

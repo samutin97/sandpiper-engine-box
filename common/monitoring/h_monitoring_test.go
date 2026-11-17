@@ -232,8 +232,8 @@ func TestH_MonitoringGroupsAndHistory(t *testing.T) {
 	require.Equal(t, []string{"c"}, m.reg().outbounds["a"].dependenciesInverse)
 
 	_, err := m.SubscribeGroup("missing")
-	require.Error(t, err)
-	require.Error(t, m.UnsubscribeGroup("missing", nil))
+	require.NoError(t, err, "waits for a reload that adds it, see TestH_SubscribeGroupBeforeReload")
+	require.Error(t, m.UnsubscribeGroup("unknown", nil))
 	require.Error(t, m.InvalidateTest("missing"))
 	require.Error(t, m.SignalChange("missing"))
 	require.Empty(t, m.OutboundsHistory("missing"))

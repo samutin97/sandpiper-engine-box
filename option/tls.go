@@ -254,6 +254,7 @@ type OutboundECHOptions struct {
 type OutboundUTLSOptions struct {
 	Enabled     bool   `json:"enabled,omitempty"`
 	Fingerprint string `json:"fingerprint,omitempty" enum:"chrome_psk,chrome_psk_shuffle,chrome_padding_psk_shuffle,chrome_pq,chrome_pq_psk,chrome,firefox,edge,safari,360,qq,ios,android,random,randomized,unsafe"`
+	KeyShare    string `json:"key_share,omitempty"` //H: "" or "hybrid", or "classical" (no X25519MLKEM768); not for REALITY
 }
 
 // UTLSFingerprintUnsafe ("unsafe", as in Xray) disables uTLS: the standard Go TLS ClientHello is sent,

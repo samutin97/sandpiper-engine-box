@@ -88,6 +88,9 @@ func NewOutbound(ctx context.Context, _ adapter.Router, logger log.ContextLogger
 	if err != nil {
 		return nil, err
 	}
+	if binder := deviceBinderFor(service.FromContext[adapter.PlatformInterface](ctx)); binder != nil { //H: see h_device_binder.go
+		config.DeviceBinder = binder //H
+	} //H
 	psiphon, err := NewPsiphon(ctx, logger, config, tag)
 	if err != nil {
 

@@ -246,7 +246,7 @@ func authentication(serverSecret string) func(next http.Handler) http.Handler {
 			// Browser websocket not support custom header
 			if r.Header.Get("Upgrade") == "websocket" && r.URL.Query().Get("token") != "" {
 				token := r.URL.Query().Get("token")
-				if token != serverSecret {
+				if !secretMatches(token, serverSecret) { //H
 					render.Status(r, http.StatusUnauthorized)
 					render.JSON(w, r, ErrUnauthorized)
 					return
@@ -259,7 +259,7 @@ func authentication(serverSecret string) func(next http.Handler) http.Handler {
 			bearer, token, found := strings.Cut(header, " ")
 
 			hasInvalidHeader := bearer != "Bearer"
-			hasInvalidSecret := !found || token != serverSecret
+			hasInvalidSecret := !found || !secretMatches(token, serverSecret) //H
 			if hasInvalidHeader || hasInvalidSecret {
 				render.Status(r, http.StatusUnauthorized)
 				render.JSON(w, r, ErrUnauthorized)

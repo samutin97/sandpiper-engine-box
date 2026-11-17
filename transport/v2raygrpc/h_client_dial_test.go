@@ -2,6 +2,7 @@ package v2raygrpc
 
 import (
 	"context"
+	"io"
 	"net"
 	"runtime"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing/common/logger"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 
@@ -92,4 +94,58 @@ func TestH_GRPCCloseEndsADialUnderWay(t *testing.T) {
 	}
 	require.Eventually(t, func() bool { return grpcRoutines() <= before }, 5*time.Second, 20*time.Millisecond,
 		"gRPC goes on redialing the server after the client closed")
+}
+
+type echoHandler struct{}
+
+func (echoHandler) NewConnectionEx(ctx context.Context, conn net.Conn, source M.Socksaddr, destination M.Socksaddr, onClose N.CloseHandlerFunc) {
+	defer func() {
+		conn.Close()
+		onClose(nil)
+	}()
+	io.Copy(conn, conn)
+}
+
+// echoServer is a server of this transport that sends back what it gets.
+func echoServer(t *testing.T) M.Socksaddr {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	server, err := NewServer(context.Background(), logger.NOP(), option.V2RayGRPCOptions{ServiceName: "tun"}, nil, echoHandler{})
+	require.NoError(t, err)
+	go server.Serve(listener)
+	t.Cleanup(func() { server.Close() })
+	return M.SocksaddrFromNet(listener.Addr())
+}
+
+func echoOnce(client interface {
+	DialContext(ctx context.Context) (net.Conn, error)
+},
+) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	conn, err := client.DialContext(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	if _, err = conn.Write([]byte("ping")); err != nil {
+		return err
+	}
+	_, err = io.ReadFull(conn, make([]byte, 4))
+	return err
+}
+
+// The client dials again after Close. VLESS, VMess and Trojan close their transport on a network
+// reset (InterfaceUpdated) and go on dialing through it; Close cancelled the client's own context,
+// so every dial after the first reset failed with "context canceled".
+func TestH_GRPCDialsAgainAfterClose(t *testing.T) {
+	client, err := NewClient(context.Background(), N.SystemDialer, echoServer(t), option.V2RayGRPCOptions{ServiceName: "tun"}, nil)
+	require.NoError(t, err)
+	defer client.Close()
+	require.NoError(t, echoOnce(client))
+	for range 2 {
+		require.NoError(t, client.Close()) // a network reset
+		require.NoError(t, echoOnce(client), "no dial after a network reset")
+	}
 }

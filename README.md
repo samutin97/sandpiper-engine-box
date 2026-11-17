@@ -60,6 +60,7 @@ its changes small and close to upstream so it can follow every sing-box release.
   [XDRIVE](docs/hiddify/features/transports/xdrive.en.md),
   [raw](docs/hiddify/features/transports/raw.en.md),
   [custom gRPC paths](docs/hiddify/features/transports/grpc-custom-path.en.md),
+  [gRPC receive windows](docs/hiddify/features/transports/grpc-window.en.md),
   [finalmask](docs/hiddify/features/transports/finalmask.en.md),
   [Shadowsocks simple-obfs server](docs/hiddify/features/transports/shadowsocks-obfs.en.md),
   [rmux](docs/hiddify/features/transports/rmux.en.md).

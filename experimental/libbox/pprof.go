@@ -1,3 +1,8 @@
+//go:build with_pprof
+
+// H: pprof (and its registration on http.DefaultServeMux) only in a debug build: a release
+// library must not carry a heap-dump server any caller could start.
+
 package libbox
 
 import (

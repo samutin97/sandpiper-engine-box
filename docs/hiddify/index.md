@@ -44,6 +44,7 @@ an English and a Persian version.
 - [XDRIVE](features/transports/xdrive.en.md): Xray's storage transport, a VLESS connection carried in files on Google Drive, S3 or another storage service, so the client never contacts the server (build tag `with_xdrive`).
 - [Raw transport](features/transports/raw.en.md): the `raw` transport, so configs converted from Xray load.
 - [Custom gRPC paths](features/transports/grpc-custom-path.en.md): Xray-style multi-segment gRPC paths in `service_name`.
+- [gRPC receive windows](features/transports/grpc-window.en.md): the gRPC client opens 4 MiB per stream from the start, so the first download on a new connection does not crawl while gRPC grows its 64 KiB window.
 - [finalmask](features/transports/finalmask.en.md): Xray's finalmask masks (fragment, noise, header-custom, xdns over UDP, TCP or DoH, udphop, merge, oob and more) on every connection an outbound dials.
 - [Shadowsocks simple-obfs server](features/transports/shadowsocks-obfs.en.md): a simple-obfs server on Shadowsocks inbounds, with a decoy when obfs or login fails.
 - [rmux](features/transports/rmux.en.md): one more multiplex protocol for many connections in one, next to smux, yamux and h2mux.

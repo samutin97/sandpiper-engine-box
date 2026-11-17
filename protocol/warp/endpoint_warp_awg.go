@@ -5,6 +5,7 @@ package warp
 import (
 	"context"
 	"net/netip"
+	"strconv" //H
 
 	"github.com/sagernet/sing-box/adapter"
 	C "github.com/sagernet/sing-box/constant"
@@ -41,7 +42,7 @@ func createWARPAwgEndpoint(
 				Address:                     peerAddr,
 				Port:                        peerPort,
 				PublicKey:                   peerPublicKey,
-				PersistentKeepaliveInterval: warpKeepalive, //H: keeps the handshake fresh, so IsReady can tell a dead path
+				PersistentKeepaliveInterval: option.AwgRange(strconv.Itoa(warpKeepalive)), //H: keeps the handshake fresh, so IsReady can tell a dead path
 				AllowedIPs: badoption.Listable[netip.Prefix]{
 					netip.MustParsePrefix("0.0.0.0/0"),
 					netip.MustParsePrefix("::/0"),

@@ -91,6 +91,12 @@ do about it. Items marked **Required** break or misbehave until they are handled
   `tolerance` and `tolerance_ratio` let a faster member outside take a slot, as for lowest-delay;
   unset, the first working members keep their slots, so hiddify-core sends them to the
   lowest-delay group only. `sticky_hash` is `sticky-sessions`' key too.
+- **Proxies tested only on demand.** `experimental.monitoring.on_demand_tags` (beside
+  `on_demand_types`) keeps proxies out of the test cycles by tag: they are tested when the user
+  asks or a group has them selected. hiddify-core puts there the proxies its automatic groups do
+  not use (the members outside a subscription's own urltest group, the UDP proxies). A balancer
+  added by a hot reload now follows the tests: it used to log `failed to observe monitoring
+  group: group not found` and stay on its first choice.
 - **URL test failover.** A failover member that is more than 2 times slower than the fastest
   other one, twice in a row, is now left for one more than 1.5 times faster.
 - **A tapped or selected proxy answers at once.** The outbound a group's selection leads to is
@@ -286,6 +292,10 @@ do about it. Items marked **Required** break or misbehave until they are handled
   addresses, proxy links and DNS stamps, URL paths and queries, UUIDs, emails and key=value
   secrets. The app's "include configuration" option no longer adds the configuration. The app
   should stop showing an "encrypted" state for reports.
+- **The log file can be opened by the embedding app.** A `log.FileOpener` in the context's
+  service registry opens the file `log.output` names, in place of the plain append-only file:
+  hiddify-core uses it to rotate `box.log` at a size and to scrub its lines as it scrubs the
+  lines it sends the app. Without one, the file is written as before.
 
 ## Behaviour the app should know about
 

@@ -11,7 +11,6 @@ import (
 	"github.com/sagernet/sing/common"
 	F "github.com/sagernet/sing/common/format"
 	"github.com/sagernet/sing/common/observable"
-	"github.com/sagernet/sing/service/filemanager"
 )
 
 var _ ObservableFactory = (*defaultFactory)(nil)
@@ -21,7 +20,7 @@ type defaultFactory struct {
 	formatter         Formatter
 	platformFormatter Formatter
 	writer            io.Writer
-	file              *os.File
+	file              io.Closer //H: the log file, as the context's FileOpener opened it
 	filePath          string
 	platformWriters   atomic.Pointer[[]PlatformWriter]
 	needConsole       bool
@@ -76,11 +75,11 @@ func NewDefaultFactory(
 func (f *defaultFactory) Start() error {
 	var err error
 	if f.filePath != "" {
-		logFile, openErr := filemanager.OpenFile(f.ctx, f.filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+		logWriter, logFile, openErr := openLogFile(f.ctx, f.filePath) //H: see h_file_opener.go
 		if openErr != nil {
 			err = openErr
 		} else {
-			f.writer = logFile
+			f.writer = logWriter //H
 			f.file = logFile
 		}
 		f.needConsole = f.writer != io.Discard
@@ -104,7 +103,7 @@ func (f *defaultFactory) Close() error {
 	f.pendingEntries = nil
 	f.startAccess.Unlock()
 	return common.Close(
-		common.PtrOrNil(f.file),
+		f.file, //H: an io.Closer now
 		f.subscriber,
 	)
 }

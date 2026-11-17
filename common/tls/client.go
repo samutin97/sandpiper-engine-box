@@ -109,6 +109,11 @@ func NewClientWithOptions(options ClientOptions) (Config, error) {
 }
 
 func ClientHandshake(ctx context.Context, conn net.Conn, config Config) (Conn, error) {
+	release, err := enterHandshake(ctx, conn, config.ServerName()) //H: see h_handshake_gate.go
+	if err != nil {                                                //H
+		return nil, err //H
+	} //H
+	defer release() //H
 	tlsConn, err := aTLS.ClientHandshake(ctx, conn, config)
 	if err != nil {
 		return nil, err
@@ -156,6 +161,12 @@ func (d *defaultDialer) dialContext(ctx context.Context, destination M.Socksaddr
 	if err != nil {
 		return nil, err
 	}
+	release, err := enterHandshake(ctx, conn, d.config.ServerName()) //H: see h_handshake_gate.go
+	if err != nil {                                                  //H
+		conn.Close()    //H
+		return nil, err //H
+	} //H
+	defer release() //H
 	tlsConn, err := aTLS.ClientHandshake(ctx, conn, d.config)
 	if err != nil {
 		conn.Close()

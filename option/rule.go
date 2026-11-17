@@ -167,6 +167,7 @@ type RawDefaultRule struct {
 	PackageNameRegex         badoption.Listable[string]                                                  `json:"package_name_regex,omitempty"`
 	User                     badoption.Listable[string]                                                  `json:"user,omitempty"`
 	UserID                   badoption.Listable[int32]                                                   `json:"user_id,omitempty"`
+	UserIDRange              badoption.Listable[string]                                                  `json:"user_id_range,omitempty"` //H: "from:to"; only an owner found matches
 	ClashMode                string                                                                      `json:"clash_mode,omitempty"`
 	NetworkType              badoption.Listable[InterfaceType]                                           `json:"network_type,omitempty"`
 	NetworkIsExpensive       bool                                                                        `json:"network_is_expensive,omitempty"`

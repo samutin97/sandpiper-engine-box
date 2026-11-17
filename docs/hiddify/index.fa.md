@@ -46,6 +46,7 @@
 - [XDRIVE](features/transports/xdrive.fa.md): ترنسپورت ذخیره‌سازی Xray؛ اتصال VLESS در فایل‌هایی روی Google Drive، S3 یا سرویس ذخیره‌سازی دیگر حمل می‌شود و کلاینت هرگز به سرور وصل نمی‌شود (build tag `with_xdrive`).
 - [ترنسپورت raw](features/transports/raw.fa.md): ترنسپورت `raw`، تا کانفیگ‌هایی که از Xray تبدیل شده‌اند بارگذاری شوند.
 - [مسیرهای دلخواه gRPC](features/transports/grpc-custom-path.fa.md): مسیرهای چندبخشی gRPC به سبک Xray در `service_name`.
+- [پنجره‌های دریافت gRPC](features/transports/grpc-window.fa.md): کلاینت gRPC از همان ابتدا برای هر stream ‏۴ مگابایت باز می‌کند تا نخستین دانلود روی اتصال تازه، تا وقتی gRPC پنجرهٔ ۶۴ کیلوبایتی‌اش را بزرگ می‌کند، کند نماند.
 - [finalmask](features/transports/finalmask.fa.md): ماسک‌های finalmask از Xray (fragment، noise، header-custom، xdns روی UDP، TCP یا DoH، udphop، merge، oob و موارد دیگر) روی هر اتصالی که یک خروجی برقرار می‌کند.
 - [سرور simple-obfs در Shadowsocks](features/transports/shadowsocks-obfs.fa.md): یک سرور simple-obfs روی ورودی‌های Shadowsocks، با یک مقصد فریب وقتی obfs یا ورود شکست بخورد.
 - [rmux](features/transports/rmux.fa.md): یک پروتکل چندگانه‌سازی دیگر برای بردن چند اتصال در یک اتصال، در کنار smux، yamux و h2mux.

@@ -4,6 +4,7 @@ import (
 	"errors"
 
 	"github.com/sagernet/sing-box/adapter"
+	E "github.com/sagernet/sing/common/exceptions"
 )
 
 // monitoringRegistry is the set of monitored outbounds and groups. It is never modified once
@@ -33,6 +34,9 @@ func (m *OutboundMonitoring) reg() *monitoringRegistry {
 func (m *OutboundMonitoring) buildRegistry(previous *monitoringRegistry) (*monitoringRegistry, error) {
 	registry := newMonitoringRegistry()
 	add := func(outbound adapter.Outbound) {
+		if m.scope.excluded(outbound) { // never tested (exclude_types)
+			return
+		}
 		state := &outboundState{groupTags: []string{}, invalid: true, outbound: outbound, dependencies: outbound.Dependencies()}
 		if old, ok := previous.outbounds[outbound.Tag()]; ok {
 			old.mu.Lock()
@@ -96,12 +100,77 @@ func (m *OutboundMonitoring) registryGroup(registry, previous *monitoringRegistr
 		grp.observer = old.observer
 		grp.notifyCh = old.notifyCh
 		grp.bestDelay = old.bestDelay
+	} else if pending, ok := m.pendingGroups[tag]; ok {
+		// subscribed before this registry had it: its subscribers get its events from now on
+		grp.observer = pending
+		grp.notifyCh = make(chan struct{}, 1)
+		delete(m.pendingGroups, tag)
 	} else {
 		grp.observer = NewBroadcaster[GroupEvent](m.ctx)
 		grp.notifyCh = make(chan struct{}, 1)
 	}
 	registry.groups[tag] = grp
 	return grp
+}
+
+// loadRegistry builds the registry from the outbounds as they are and stores it, under
+// reloadAccess (see subscribePendingGroup).
+func (m *OutboundMonitoring) loadRegistry() (*monitoringRegistry, error) {
+	m.reloadAccess.Lock()
+	defer m.reloadAccess.Unlock()
+	registry, err := m.buildRegistry(newMonitoringRegistry())
+	if err != nil {
+		return nil, err
+	}
+	m.registry.Store(registry)
+	return registry, nil
+}
+
+// subscribePendingGroup subscribes to a group the registry does not have yet. A hot reload
+// creates and starts the new outbounds first and reloads the monitoring after: a balancer it adds
+// subscribes from its PostStart, before the reload registers it, and got "group not found", so it
+// never followed the tests (the balancer stayed on its first choice for the whole run). The
+// observer waits here and the next registry that has the group takes it (registryGroup). Under
+// reloadAccess, so a reload either already stored a registry with the group, or takes the
+// observer when it builds one.
+func (m *OutboundMonitoring) subscribePendingGroup(groupTag string) (<-chan GroupEvent, error) {
+	m.reloadAccess.Lock()
+	defer m.reloadAccess.Unlock()
+	if g, ok := m.reg().groups[groupTag]; ok {
+		return g.observer.Subscribe(8), nil
+	}
+	if m.ctx.Err() != nil {
+		return nil, E.New("group not found ", groupTag, ": monitoring closed")
+	}
+	if m.pendingGroups == nil {
+		m.pendingGroups = make(map[string]*Broadcaster[GroupEvent])
+	}
+	observer, ok := m.pendingGroups[groupTag]
+	if !ok {
+		observer = NewBroadcaster[GroupEvent](m.ctx)
+		m.pendingGroups[groupTag] = observer
+	}
+	return observer.Subscribe(8), nil
+}
+
+func (m *OutboundMonitoring) unsubscribePendingGroup(groupTag string, observer <-chan GroupEvent) bool {
+	m.reloadAccess.Lock()
+	defer m.reloadAccess.Unlock()
+	pending, ok := m.pendingGroups[groupTag]
+	if ok {
+		pending.Unsubscribe(observer)
+	}
+	return ok
+}
+
+// closePendingGroups ends the subscriptions of groups that never came.
+func (m *OutboundMonitoring) closePendingGroups() {
+	m.reloadAccess.Lock()
+	defer m.reloadAccess.Unlock()
+	for tag, observer := range m.pendingGroups {
+		observer.Close()
+		delete(m.pendingGroups, tag)
+	}
 }
 
 // Reload re-reads the outbounds and endpoints after they were replaced at runtime (hot reload).

@@ -23,6 +23,7 @@ type HTTPMixedInboundOptions struct {
 	DomainResolver *DomainResolveOptions `json:"domain_resolver,omitempty"`
 	SetSystemProxy bool                  `json:"set_system_proxy,omitempty"`
 	InboundTLSOptionsContainer
+	DisableUDP bool `json:"disable_udp,omitempty"` //H: refuse SOCKS5 UDP ASSOCIATE, which the password does not cover
 }
 
 type _HTTPInboundOptions struct {

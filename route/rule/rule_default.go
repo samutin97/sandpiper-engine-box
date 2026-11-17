@@ -238,6 +238,14 @@ func NewDefaultRule(ctx context.Context, logger log.ContextLogger, options optio
 		rule.items = append(rule.items, item)
 		rule.allItems = append(rule.allItems, item)
 	}
+	if len(options.UserIDRange) > 0 { //H
+		item, err := NewUserIDRangeItem(options.UserIDRange) //H
+		if err != nil {                                      //H
+			return nil, E.Cause(err, "user_id_range") //H
+		} //H
+		rule.items = append(rule.items, item)       //H
+		rule.allItems = append(rule.allItems, item) //H
+	} //H
 	if options.ClashMode != "" {
 		item := NewClashModeItem(ctx, options.ClashMode)
 		rule.items = append(rule.items, item)
