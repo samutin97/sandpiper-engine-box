@@ -34,7 +34,7 @@ func (s *Server) authenticate(ctx context.Context, request *http.Request, header
 		return nil, E.New("authentication failed: missing or malformed ", headerName)
 	}
 	if !s.authenticator.Verify(username, password) {
-		return nil, E.New("authentication failed: username=", username)
+		return nil, E.New("authentication failed") //H: no user name in the log, see h_tunnel_server_auth_test.go
 	}
 	return auth.ContextWithUser(ctx, username), nil
 }
