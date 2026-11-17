@@ -170,3 +170,48 @@ func TestH_ReloadShowsOnDemandResultsAsWaiting(t *testing.T) {
 	require.True(t, m.getUrlTest("b").IsFromCache)
 	require.False(t, onDemand.invalid, "and not tested because of the reload")
 }
+
+type nowGroup struct {
+	fakeGroup
+	now string
+}
+
+func (g *nowGroup) Now() string { return g.now }
+
+// A reload that replaced every outbound (a changed TLS setting) tested the on-demand ones too:
+// a handshake to the server each, and a ping shown for proxies nobody had asked for. Now only
+// the ones a group has selected are.
+func TestH_ReloadLeavesOnDemandUntested(t *testing.T) {
+	a := &fakeOutbound{tag: "a"}
+	b := &fakeOutbound{tag: "b"}
+	c := &fakeOutbound{tag: "c"}
+	grp := &nowGroup{fakeGroup: fakeGroup{fakeOutbound: fakeOutbound{tag: "grp"}, all: []string{"a", "b", "c"}}, now: "c"}
+	m := newTestMonitor(t, nil, option.MonitoringOptions{OnDemandTags: []string{"b", "c"}}, a, b, c, grp)
+	require.NoError(t, htest.Start(m, adapter.StartStateInitialize))
+	m.started = true
+	m.workerWG.Add(1)
+	go m.workerLoop()
+	m.cycleSeq.Store(1)
+	for _, tag := range []string{"a", "b", "c"} {
+		setHistory(m, tag, 90, false, nil)
+		m.reg().outbounds[tag].invalid = false
+	}
+	manager := m.outboundManager.(*fakeOutboundManager)
+	manager.list = []adapter.Outbound{&fakeOutbound{tag: "a"}, &fakeOutbound{tag: "b"}, &fakeOutbound{tag: "c"}, grp}
+	require.NoError(t, m.Reload())
+	tested := func(tag string) bool {
+		state := m.reg().outbounds[tag]
+		state.mu.Lock()
+		defer state.mu.Unlock()
+		return state.history.Delay == TimeoutDelay
+	}
+	require.Eventually(t, func() bool { return tested("a") && tested("c") }, 3*time.Second, 5*time.Millisecond,
+		"the replaced proxy of the cycles, and the on-demand one the group selected, are tested (the fake dial fails)")
+	time.Sleep(100 * time.Millisecond)
+	b2 := m.reg().outbounds["b"]
+	b2.mu.Lock()
+	defer b2.mu.Unlock()
+	require.Equal(t, uint16(90), b2.history.Delay, "the on-demand proxy nobody selected is not tested")
+	require.True(t, b2.from_cache, "its old result is shown as waiting")
+	require.False(t, b2.queued)
+}

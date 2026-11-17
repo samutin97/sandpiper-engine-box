@@ -225,11 +225,17 @@ func (m *OutboundMonitoring) Reload() error {
 // every outbound whose result was older than the interval, which after a profile update was all
 // of them, and the changed ones waited behind them, or for the next tick when a cycle was
 // already running. Before the first cycle there is nothing to do: it tests everything.
+//
+// An outbound tested on demand only (on_demand_types, on_demand_tags) is not tested because a
+// reload replaced it, unless a group has it selected: no cycle tests it, and a reload that
+// replaced every outbound (a changed TLS setting) tested them all at once, each with a handshake
+// to the server, and showed a ping for proxies nobody had asked for.
 func (m *OutboundMonitoring) testChanged(previous, registry *monitoringRegistry) {
 	cycleID := m.cycleSeq.Load()
 	if cycleID == 0 {
 		return
 	}
+	var selected map[string]bool
 	for tag, state := range registry.outbounds {
 		if _, isGroup := registry.groups[tag]; isGroup {
 			continue
@@ -239,6 +245,14 @@ func (m *OutboundMonitoring) testChanged(previous, registry *monitoringRegistry)
 		}
 		if m.parked(tag, state) { // tested when it is taken out of rest
 			continue
+		}
+		if m.scope.onDemand(state.outbound) {
+			if selected == nil {
+				selected = m.selectedTags()
+			}
+			if !selected[tag] {
+				continue
+			}
 		}
 		m.enqueueTask(&testTask{outboundTag: tag, cycleID: cycleID, reason: "replaced by a reload"})
 	}
