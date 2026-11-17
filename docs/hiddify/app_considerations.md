@@ -299,6 +299,18 @@ do about it. Items marked **Required** break or misbehave until they are handled
 
 ## Behaviour the app should know about
 
+- **Handshake gate: drawn gaps and a window (`9e75af857`).** `experimental.handshake_gate` has
+  `max_gap` (each gap between two handshakes, and between two ClientHellos, to a server is drawn
+  uniformly in `[min_gap, max_gap]`) and `window` + `window_max` (at most `window_max`
+  handshakes start to a server in any `window`). Both are off when unset, so the gate paces as
+  before. hiddify-core sets the values it wants explicitly.
+- **TUN DNS address (`ff8ef53a8`).** Only UDP port 53 of the TUN's DNS address is hijacked as DNS;
+  a datagram to another port goes through the route rules (hiddify-core rejects the TUN subnet
+  there).
+- **Monitoring after a reload (`6b5fcc90c`).** On-demand outbounds are no longer tested because a
+  reload replaced them, unless a group selected them: their old result is reported as cached
+  (`IsFromCache`), and the app shows them as not tested.
+
 - **Keep top is the core's own now, and the proxy list is always whole.** hiddify-core no longer
   drops proxies from the config and hot reloads to keep the fastest few. With `keep-top`,
   `keep-top-countries` or keep-top answering set, it marks the profile's proxies `lazy`, whatever
