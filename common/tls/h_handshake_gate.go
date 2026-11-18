@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/sagernet/sing-box/common/dialer"
 	"github.com/sagernet/sing-box/option"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
@@ -27,8 +28,14 @@ import (
 // was dialed through DialForHandshake (the outbounds' TLS dials: the TLS dialer, VLESS, XHTTP,
 // gRPC), so a connection waiting for its turn is not left open without a ClientHello: the turn is
 // taken before the connect and kept until the handshake ends. Such a dial is counted by the
-// destination as the outbound gives it (an address, or a domain before it is resolved). Every
-// ClientHello to an address, dialed so or not, also keeps min_gap from the previous one there.
+// destination as the outbound gives it: an address as it is. A domain counts at the address it
+// reached last, remembered from its earlier connects, and by its name while the gate has seen none;
+// after the connect its turn also counts at the address it reached (there it holds a place in
+// max_inflight, and sets the gap and the window for the turns after it) until the handshake ends, so
+// the dials of one server by its address and by any of its names share one queue. A dial through
+// another outbound (a detour) reaches that outbound's server, not the domain's: it is counted by
+// the name alone. Every ClientHello to an address, dialed so or not, also keeps min_gap from the
+// previous one there.
 //
 // With max_gap, each gap is drawn anew between min_gap and max_gap: a fixed rhythm is a pattern of
 // its own, and a margin above the DPI's threshold survives the jitter of a radio network that
@@ -49,7 +56,17 @@ type handshakeGate struct {
 	access      sync.Mutex
 	servers     map[gateKey]*gateState
 	tickets     map[string]*dialTicket
+	names       map[string]gateName // the address each domain reached last, at most gateNamesMax
 }
+
+// gateName is the address (subnet) a domain dialed through the gate reached last.
+type gateName struct {
+	address gateKey
+	used    time.Time // its last dial
+}
+
+// gateNamesMax bounds the domains the gate remembers; past it, the one dialed longest ago goes.
+const gateNamesMax = 256
 
 // gateKey is a server: its address (subnet), or its domain for a dial not resolved yet.
 type gateKey struct {
@@ -134,6 +151,9 @@ func DialForHandshake(ctx context.Context, dialer N.Dialer, destination M.Socksa
 	if gate == nil {
 		return dialer.DialContext(ctx, N.NetworkTCP, destination)
 	}
+	if !destination.IsIP() && destination.Fqdn != "" && !throughDetour(dialer) {
+		return gate.dialName(ctx, dialer, destination)
+	}
 	end, err := gate.enter(ctx, gate.destinationKey(destination))
 	if err != nil {
 		return nil, err
@@ -176,6 +196,158 @@ func enterHandshake(ctx context.Context, conn net.Conn, serverName string) (func
 		return nil, err
 	}
 	return end, nil
+}
+
+// throughDetour: a dial through another outbound reaches that outbound's server.
+func throughDetour(d N.Dialer) bool {
+	return dialer.ThroughDetour(d)
+}
+
+// dialName is DialForHandshake for a server given by its domain and dialed straight to it. The
+// turn is taken at the address the domain reached last, as for a dial by address, or at the domain
+// while the gate has seen none. After the connect it counts at the address reached too, when that
+// is another one (the domain's first dial, or a new address in DNS), without waiting there: the
+// handshake then waits only for the gap since the previous ClientHello. It ends at both.
+func (g *handshakeGate) dialName(ctx context.Context, dialer N.Dialer, destination M.Socksaddr) (net.Conn, error) {
+	name := g.destinationKey(destination)
+	key, err := g.enterName(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	conn, err := dialer.DialContext(ctx, N.NetworkTCP, destination)
+	if err != nil {
+		g.leave(key)
+		return nil, err
+	}
+	keys := []gateKey{key}
+	if address := g.addressKey(remoteAddress(conn)); address.server.IsValid() && g.reached(name, key, address) {
+		keys = append(keys, address)
+	}
+	var once sync.Once
+	end := func() {
+		once.Do(func() {
+			for _, key := range keys {
+				g.leave(key)
+			}
+		})
+	}
+	if !g.addTicket(conn, end) {
+		// a connection without addresses cannot be found again: its handshake takes a turn of its own
+		end()
+	}
+	return conn, nil
+}
+
+// enterName takes the turn of a dial by domain, at the address the domain reached last or at the
+// domain itself, and returns where it was taken. A dial that waits looks the address up again
+// each time it wakes: one the domain's first connect reveals meanwhile takes over.
+func (g *handshakeGate) enterName(ctx context.Context, name gateKey) (gateKey, error) {
+	for {
+		g.access.Lock()
+		key := name
+		if known, loaded := g.names[name.host]; loaded {
+			key = known.address
+		}
+		state := g.state(key)
+		now := time.Now()
+		wait := state.startGap - now.Sub(state.lastStart)
+		if windowWait := g.windowWait(state, now); windowWait > wait {
+			wait = windowWait
+		}
+		if state.inflight < g.maxInflight && wait <= 0 {
+			g.take(state, now)
+			g.access.Unlock()
+			return key, nil
+		}
+		changed := state.changed
+		full := state.inflight >= g.maxInflight
+		g.access.Unlock()
+		if err := g.sleep(ctx, changed, full, wait); err != nil {
+			return gateKey{}, err
+		}
+	}
+}
+
+// take counts a turn in state at now: one more in flight, the gap the next turn keeps (never
+// shorter than the one already set) and a start in the window; access must be held.
+func (g *handshakeGate) take(state *gateState, now time.Time) {
+	g.windowWait(state, now) // drops the starts out of the window
+	next := now.Add(g.gap())
+	if kept := state.lastStart.Add(state.startGap); kept.After(next) {
+		next = kept
+	}
+	state.inflight++
+	state.lastStart = now
+	state.startGap = next.Sub(now)
+	if g.windowMax > 0 {
+		state.starts = append(state.starts, now)
+	}
+}
+
+// reached remembers the address a dial by domain connected to, and counts the dial's turn, taken
+// at key, at that address too when it is another one; true when it did.
+func (g *handshakeGate) reached(name, key, address gateKey) bool {
+	g.access.Lock()
+	defer g.access.Unlock()
+	now := time.Now()
+	previous, known := g.names[name.host]
+	g.remember(name.host, address, now)
+	if !known || previous.address != address {
+		// the dials of this domain waiting at its name (or at its old address) move here
+		g.wake(key)
+	}
+	if address == key {
+		return false
+	}
+	g.take(g.state(address), now)
+	return true
+}
+
+// remember keeps the address of a domain, within gateNamesMax; access must be held.
+func (g *handshakeGate) remember(host string, address gateKey, now time.Time) {
+	if g.names == nil {
+		g.names = map[string]gateName{}
+	}
+	if _, known := g.names[host]; !known && len(g.names) >= gateNamesMax {
+		g.sweepNames(max(time.Minute, g.window, g.maxGap))
+		if len(g.names) >= gateNamesMax {
+			var oldest string
+			for other, entry := range g.names {
+				if oldest == "" || entry.used.Before(g.names[oldest].used) {
+					oldest = other
+				}
+			}
+			delete(g.names, oldest)
+		}
+	}
+	g.names[host] = gateName{address: address, used: now}
+}
+
+// sweepNames forgets the domains not dialed within idle; access must be held.
+func (g *handshakeGate) sweepNames(idle time.Duration) {
+	for host, entry := range g.names {
+		if time.Since(entry.used) > idle {
+			delete(g.names, host)
+		}
+	}
+}
+
+// wake lets the turns waiting at key look again; access must be held.
+func (g *handshakeGate) wake(key gateKey) {
+	if state := g.servers[key]; state != nil {
+		close(state.changed)
+		state.changed = make(chan struct{})
+	}
+}
+
+// remoteAddress is conn's remote address, or nil when it cannot tell it.
+func remoteAddress(conn net.Conn) (remote net.Addr) {
+	defer func() {
+		if recover() != nil {
+			remote = nil
+		}
+	}()
+	return conn.RemoteAddr()
 }
 
 func (g *handshakeGate) addressKey(remote net.Addr) gateKey {
@@ -318,7 +490,8 @@ func (g *handshakeGate) sleep(ctx context.Context, changed chan struct{}, full b
 	return nil
 }
 
-// sweep forgets the servers without a turn in the last minute (or window); access must be held.
+// sweep forgets the servers without a turn in the last minute (or window), and the domains not
+// dialed in that time; access must be held.
 func (g *handshakeGate) sweep() {
 	idle := max(time.Minute, g.window, g.maxGap)
 	for key, state := range g.servers {
@@ -326,6 +499,7 @@ func (g *handshakeGate) sweep() {
 			delete(g.servers, key)
 		}
 	}
+	g.sweepNames(idle)
 }
 
 func (g *handshakeGate) leave(key gateKey) {
