@@ -9,7 +9,9 @@ import "github.com/sagernet/sing/common/json/badoption"
 // min_gap and max_gap, so the series has no fixed rhythm. With window and window_max, at most
 // window_max handshakes start to one server within any window (a sliding window; off when either
 // is 0). ipv4_prefix / ipv6_prefix group the addresses of a subnet as one server (32 and 128, one
-// address, when 0). Off unless enabled. See common/tls/h_handshake_gate.go. //H
+// address, when 0). unseen_hold is how long the turn of a handshake the gate does not see lasts
+// after its connect (a naive outbound's, made by cronet; 1s when 0). Off unless enabled. See
+// common/tls/h_handshake_gate.go. //H
 type HandshakeGateOptions struct {
 	Enabled     bool               `json:"enabled,omitempty"`
 	MaxInflight int                `json:"max_inflight,omitempty"`
@@ -19,4 +21,5 @@ type HandshakeGateOptions struct {
 	WindowMax   int                `json:"window_max,omitempty"`
 	IPv4Prefix  int                `json:"ipv4_prefix,omitempty"`
 	IPv6Prefix  int                `json:"ipv6_prefix,omitempty"`
+	UnseenHold  badoption.Duration `json:"unseen_hold,omitempty"`
 }

@@ -13,6 +13,7 @@ import (
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/adapter/outbound"
 	"github.com/sagernet/sing-box/common/dialer"
+	"github.com/sagernet/sing-box/common/tls" //H
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/dns"
 	"github.com/sagernet/sing-box/log"
@@ -188,7 +189,7 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 		ExtraHeaders:             extraHeaders,
 		ReceiveWindow:            options.ReceiveWindow.Value(),
 		TrustedRootCertificates:  trustedRootCertificates,
-		Dialer:                   outboundDialer,
+		Dialer:                   tls.GateDialer(outboundDialer), //H: cronet's handshakes in the gate, see h_handshake_gate_unseen.go
 		DNSResolver:              dnsResolver,
 		ECHEnabled:               echEnabled,
 		ECHConfigList:            echConfigList,

@@ -53,6 +53,7 @@ type handshakeGate struct {
 	windowMax   int
 	prefix4     int
 	prefix6     int
+	unseenHold  time.Duration // how long the turn of a handshake the gate does not see lasts
 	access      sync.Mutex
 	servers     map[gateKey]*gateState
 	tickets     map[string]*dialTicket
@@ -98,6 +99,7 @@ var activeGate atomic.Pointer[handshakeGate]
 const (
 	DefaultGateMaxInflight = 3
 	DefaultGateMinGap      = 450 * time.Millisecond
+	DefaultGateUnseenHold  = time.Second
 )
 
 // dialTicketHold is how long a dial's turn waits for its handshake: a dial that is never followed
@@ -119,6 +121,7 @@ func SetHandshakeGate(options *option.HandshakeGateOptions) {
 		windowMax:   options.WindowMax,
 		prefix4:     options.IPv4Prefix,
 		prefix6:     options.IPv6Prefix,
+		unseenHold:  time.Duration(options.UnseenHold),
 		servers:     map[gateKey]*gateState{},
 		tickets:     map[string]*dialTicket{},
 	}
@@ -133,6 +136,9 @@ func SetHandshakeGate(options *option.HandshakeGateOptions) {
 	}
 	if gate.window <= 0 || gate.windowMax <= 0 {
 		gate.window, gate.windowMax = 0, 0
+	}
+	if gate.unseenHold <= 0 {
+		gate.unseenHold = DefaultGateUnseenHold
 	}
 	if gate.prefix4 <= 0 || gate.prefix4 > 32 {
 		gate.prefix4 = 32
