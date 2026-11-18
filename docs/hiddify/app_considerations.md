@@ -311,6 +311,17 @@ do about it. Items marked **Required** break or misbehave until they are handled
 - **Handshake gate: naive too (`1acadc893`).** The naive outbound's handshakes (made by cronet)
   take their turn in the gate. Their end is not seen, so the turn lasts
   `experimental.handshake_gate.unseen_hold` after the connect (1s when unset).
+- **Handshake gate: counts and a dial's trace (`6a7c35b75`).** `tls.TakeHandshakeGateStats()`
+  returns, for each server key the gate counts by (`address/bits`, or a domain it knew no address
+  for), the turns taken, how many waited and for what (`Full`: a place in `max_inflight`,
+  `Window`: `window_max`), the longest and total wait, the ClientHellos let go and the TCP
+  connects that failed after a turn, since the previous call (at most 256 servers, the rest as
+  `other`). `tls.WithDialTrace(ctx, trace)` makes the dials for a TLS handshake under `ctx` record
+  their wait in the gate, their TCP connect and whether the ClientHello went out
+  (`DialTrace.Info()`), so a failed dial through a proxy is told apart as a connect that failed
+  or a handshake that did not end; a gRPC dial records it only when gRPC hands the dial the
+  caller's context. Nothing changes in what the gate does; hiddify-core writes both to its block
+  journal.
 - **System proxy on Windows puts back the previous one (`5942fb8d3`).** Turning the system proxy
   off restores another program's proxy settings that were on before it (server, exceptions) if
   that proxy still answers a TCP connect within `experimental.system_proxy.restore_check_timeout`
