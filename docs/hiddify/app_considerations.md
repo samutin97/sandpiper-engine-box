@@ -317,7 +317,9 @@ do about it. Items marked **Required** break or misbehave until they are handled
   (1s when unset); otherwise it turns the system proxy off as before. This holds for an inbound's
   `set_system_proxy` and for `settings.NewSystemProxy` used directly. A core that is killed still
   leaves the system proxy at its closed port until the next start turns it off (the previous
-  settings are kept in memory only).
+  settings are kept in memory only); that cleanup (a `Disable` without an `Enable`) turns it off
+  only while it is on and points at the address given, and leaves another program's proxy
+  alone (`90940bfc1`).
 - **TUN DNS address (`ff8ef53a8`).** Only UDP port 53 of the TUN's DNS address is hijacked as DNS;
   a datagram to another port goes through the route rules (hiddify-core rejects the TUN subnet
   there).
