@@ -3,6 +3,7 @@ package box
 import (
 	"bytes"
 	"context"
+	"slices"
 	"sort"
 	"strings"
 
@@ -43,11 +44,12 @@ type HotReloadResult struct {
 	RouteFinal bool
 	DNSFinal   bool
 	KeepTop    bool // the keep top options of the monitoring changed
+	OnDemand   bool // the outbounds the monitoring tests on demand only (on_demand_tags) changed
 }
 
 func (r HotReloadResult) IsEmpty() bool {
 	return r.Outbounds.IsEmpty() && r.DNSServers.IsEmpty() && r.Inbounds.IsEmpty() &&
-		!r.RouteRules && !r.DNSRules && !r.RouteFinal && !r.DNSFinal && !r.KeepTop
+		!r.RouteRules && !r.DNSRules && !r.RouteFinal && !r.DNSFinal && !r.KeepTop && !r.OnDemand
 }
 
 // HotReload applies options to the running box without restarting it. It returns an error,
@@ -92,7 +94,7 @@ func CheckHotReload(ctx context.Context, oldOptions, newOptions option.Options) 
 	oldRest, newRest := oldOptions, newOptions
 	for _, options := range []*option.Options{&oldRest, &newRest} {
 		options.Inbounds, options.Outbounds, options.Endpoints, options.DNS, options.Route = nil, nil, nil, nil, nil
-		options.Experimental = withoutKeepTop(options.Experimental)
+		options.Experimental = withoutReloadableMonitoring(options.Experimental)
 	}
 	keys, err := changedKeys(ctx, &oldRest, &newRest)
 	if err != nil {
@@ -541,7 +543,17 @@ func planHotReload(ctx context.Context, oldOptions, newOptions option.Options) (
 	if plan.result.KeepTop, err = contentChanged(ctx, keepTopOptions(oldOptions), keepTopOptions(newOptions)); err != nil {
 		return nil, err
 	}
+	plan.result.OnDemand = !slices.Equal(onDemandTags(oldOptions), onDemandTags(newOptions))
 	return plan, nil
+}
+
+// onDemandTags are the outbounds the monitoring tests on demand only by their tag, which a hot
+// reload can change.
+func onDemandTags(options option.Options) []string {
+	if options.Experimental == nil || options.Experimental.Monitoring == nil {
+		return nil
+	}
+	return options.Experimental.Monitoring.OnDemandTags
 }
 
 // keepTopOptions are the keep top options of the monitoring, which a hot reload can change.
@@ -552,14 +564,17 @@ func keepTopOptions(options option.Options) *option.KeepTopOptions {
 	return options.Experimental.Monitoring.KeepTop
 }
 
-// withoutKeepTop is experimental without the keep top options, for comparing the rest.
-func withoutKeepTop(experimental *option.ExperimentalOptions) *option.ExperimentalOptions {
-	if experimental == nil || experimental.Monitoring == nil || experimental.Monitoring.KeepTop == nil {
+// withoutReloadableMonitoring is experimental without what a hot reload changes in the monitoring
+// (keep top, on_demand_tags), for comparing the rest.
+func withoutReloadableMonitoring(experimental *option.ExperimentalOptions) *option.ExperimentalOptions {
+	if experimental == nil || experimental.Monitoring == nil ||
+		experimental.Monitoring.KeepTop == nil && len(experimental.Monitoring.OnDemandTags) == 0 {
 		return experimental
 	}
 	rest := *experimental
 	monitoringRest := *experimental.Monitoring
 	monitoringRest.KeepTop = nil
+	monitoringRest.OnDemandTags = nil
 	rest.Monitoring = &monitoringRest
 	return &rest
 }
@@ -652,6 +667,13 @@ func (s *Box) applyHotReload(ctx context.Context, plan *hotReloadPlan) error {
 			if selector, isSelector := outbound.(hotReloadSelector); isSelector {
 				selector.SelectOutbound(selected)
 			}
+		}
+	}
+	// before the monitoring's outbounds are read again: the kept ones keep or drop their results by
+	// the new on-demand list
+	if plan.result.OnDemand {
+		if monitor := monitoring.Get(s.ctx); monitor != nil {
+			monitor.SetOnDemandTags(onDemandTags(plan.newOptions))
 		}
 	}
 	if !plan.result.Outbounds.IsEmpty() {

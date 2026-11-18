@@ -2,6 +2,7 @@ package monitoring
 
 import (
 	"slices"
+	"sync/atomic"
 
 	"github.com/sagernet/sing-box/adapter"
 	C "github.com/sagernet/sing-box/constant"
@@ -21,6 +22,10 @@ import (
 //     selected: a burst of handshakes of every protocol to the same server at each Wi-Fi/LTE
 //     switch is easy to see, HC-10) or "none".
 //   - disable_ipinfo: no IP lookup after a test.
+//
+// A hot reload can change on_demand_tags (SetOnDemandTags): the set of proxies of a subscription
+// that no automatic group uses changes with the subscription, and a restart for it dropped every
+// connection. The other fields stay as the box started.
 
 const (
 	RetestAll      = "all"
@@ -31,12 +36,15 @@ const (
 type testScope struct {
 	excludeTypes  []string
 	onDemandTypes []string
-	onDemandTags  []string
+	onDemandTags  *atomic.Pointer[[]string] // replaced by a hot reload (SetOnDemandTags)
 	retest        string
 	noIPInfo      bool
 }
 
 func newTestScope(options option.MonitoringOptions) testScope {
+	onDemandTags := &atomic.Pointer[[]string]{}
+	tags := []string(options.OnDemandTags)
+	onDemandTags.Store(&tags)
 	retest := options.RetestOnNetworkChange
 	switch retest {
 	case RetestSelected, RetestNone:
@@ -46,15 +54,26 @@ func newTestScope(options option.MonitoringOptions) testScope {
 	return testScope{
 		excludeTypes:  options.ExcludeTypes,
 		onDemandTypes: options.OnDemandTypes,
-		onDemandTags:  options.OnDemandTags,
+		onDemandTags:  onDemandTags,
 		retest:        retest,
 		noIPInfo:      options.DisableIPInfo,
 	}
 }
 
+// tags are the outbounds tested on demand only by their tag, now.
+func (s testScope) tags() []string {
+	if s.onDemandTags == nil {
+		return nil
+	}
+	if tags := s.onDemandTags.Load(); tags != nil {
+		return *tags
+	}
+	return nil
+}
+
 // hasOnDemand: some outbound may be tested on demand only, by its type or its tag.
 func (s testScope) hasOnDemand() bool {
-	return len(s.onDemandTypes) > 0 || len(s.onDemandTags) > 0
+	return len(s.onDemandTypes) > 0 || len(s.tags()) > 0
 }
 
 // excluded: never tested, not in the registry.
@@ -65,7 +84,19 @@ func (s testScope) excluded(outbound adapter.Outbound) bool {
 // onDemand: tested only when asked for or selected, by its type (on_demand_types) or its tag
 // (on_demand_tags).
 func (s testScope) onDemand(outbound adapter.Outbound) bool {
-	return slices.Contains(s.onDemandTypes, outbound.Type()) || slices.Contains(s.onDemandTags, outbound.Tag())
+	return slices.Contains(s.onDemandTypes, outbound.Type()) || slices.Contains(s.tags(), outbound.Tag())
+}
+
+// SetOnDemandTags replaces the outbounds tested on demand only by their tag (on_demand_tags) of a
+// running monitoring (hot reload). A tag that leaves the list is tested from the next cycle on; one
+// that joins it is no longer tested in cycles unless a group selects it. Called before Reload of
+// the same hot reload, so that the outbounds kept keep or drop their results by the new list.
+func (m *OutboundMonitoring) SetOnDemandTags(tags []string) {
+	if m.scope.onDemandTags == nil {
+		return
+	}
+	tags = slices.Clone(tags)
+	m.scope.onDemandTags.Store(&tags)
 }
 
 // selectedTags are the outbounds the groups have selected now.

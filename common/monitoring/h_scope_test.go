@@ -71,3 +71,22 @@ type testOutbound struct {
 
 func (o testOutbound) Type() string { return o.typ }
 func (o testOutbound) Tag() string  { return o.tag }
+
+// A hot reload replaces on_demand_tags of the running monitoring (SetOnDemandTags): a tag that
+// leaves the list is tested in the next cycle, one that joins it is not; the caller's slice is not
+// kept.
+func TestH_OnDemandTagsHotReload(t *testing.T) {
+	h3, grpc, wg := &fakeOutbound{tag: "h3"}, &fakeOutbound{tag: "grpc"}, &fakeOutbound{tag: "wg"}
+	mon := newTestMonitor(t, nil, option.MonitoringOptions{OnDemandTags: []string{"h3"}}, h3, grpc, wg)
+	require.NoError(t, htest.Start(mon, adapter.StartStateInitialize))
+	require.ElementsMatch(t, []string{"grpc", "wg"}, mon.collectCycleTargets())
+
+	tags := []string{"wg"}
+	mon.SetOnDemandTags(tags)
+	tags[0] = "grpc"
+	require.ElementsMatch(t, []string{"h3", "grpc"}, mon.collectCycleTargets())
+
+	mon.SetOnDemandTags(nil)
+	require.False(t, mon.scope.hasOnDemand())
+	require.ElementsMatch(t, []string{"h3", "grpc", "wg"}, mon.collectCycleTargets())
+}
