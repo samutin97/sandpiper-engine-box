@@ -177,6 +177,7 @@ func New(options Options) (*Box, error) {
 		ctx = urltest.ContextWithIsUnifiedDelay(ctx)
 	}
 	tls.SetHandshakeGate(experimentalOptions.HandshakeGate) //H
+	hSetSystemProxyOptions(experimentalOptions)             //H: see h_box_system_proxy.go
 	platformInterface := service.FromContext[adapter.PlatformInterface](ctx)
 	var defaultLogWriter io.Writer
 	if platformInterface != nil {

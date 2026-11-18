@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	M "github.com/sagernet/sing/common/metadata"
-	"github.com/sagernet/sing/common/wininet"
 )
 
 type WindowsSystemProxy struct {
@@ -13,6 +12,7 @@ type WindowsSystemProxy struct {
 	supportSOCKS bool
 	bypassDomain []string
 	isEnabled    bool
+	previous     *windowsProxySettings //H: the settings Enable replaced, see h_proxy_previous_windows.go
 }
 
 func NewSystemProxy(ctx context.Context, serverAddr M.Socksaddr, supportSOCKS bool, bypassDomain []string) (*WindowsSystemProxy, error) {
@@ -28,7 +28,8 @@ func (p *WindowsSystemProxy) IsEnabled() bool {
 }
 
 func (p *WindowsSystemProxy) Enable() error {
-	err := wininet.SetSystemProxy("http://"+p.serverAddr.String(), strings.Join(p.bypassDomain, ";"))
+	p.previous = rememberPrevious(p.serverAddr)                                                 //H
+	err := windowsProxy.Set("http://"+p.serverAddr.String(), strings.Join(p.bypassDomain, ";")) //H
 	if err != nil {
 		return err
 	}
@@ -41,7 +42,7 @@ func (p *WindowsSystemProxy) Close() error {
 }
 
 func (p *WindowsSystemProxy) Disable() error {
-	err := wininet.ClearSystemProxy()
+	err := p.restorePrevious() //H: back to the settings Enable replaced, or off
 	if err != nil {
 		return err
 	}

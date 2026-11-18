@@ -14,6 +14,7 @@ type ExperimentalOptions struct {
 	Monitoring    *MonitoringOptions    `json:"monitoring,omitempty"`     //H
 	UnifiedDelay  *UnifiedDelayOptions  `json:"unified_delay,omitempty"`  //H
 	HandshakeGate *HandshakeGateOptions `json:"handshake_gate,omitempty"` //H: see h_handshake_gate.go
+	SystemProxy   *SystemProxyOptions   `json:"system_proxy,omitempty"`   //H: see h_system_proxy.go
 }
 
 type UnifiedDelayOptions struct { //H
