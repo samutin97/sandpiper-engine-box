@@ -323,6 +323,9 @@ func (m *OutboundMonitoring) keepTopRefreshLocked(registry *monitoringRegistry) 
 		if _, isLazy := outbound.(adapter.LazyOutbound); !isLazy || state == nil || state.outbound != outbound {
 			continue
 		}
+		if m.scope.outsideKeepTop(outbound) {
+			continue // tested on demand only, or held back: never keep top's (h_scope.go)
+		}
 		tags = append(tags, tag)
 		if k.owners[tag] == outbound {
 			continue

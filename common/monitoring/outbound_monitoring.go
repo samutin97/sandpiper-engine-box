@@ -518,7 +518,7 @@ func (m *OutboundMonitoring) testNow(outboundTag string, priority bool, reason s
 			reason:      reason,   //H
 		}
 
-		if !m.enqueueTask(task) {
+		if !m.enqueueTask(task) && !m.scope.held(outboundTag) { //H: a held one says so itself
 			m.logger.Info("MONITORING ", outboundTag, ": not tested again (", reason, "): a test of it is queued or running, or it is unknown") //H
 		}
 	}
@@ -892,6 +892,10 @@ func (m *OutboundMonitoring) enqueueTask(task *testTask) bool {
 	if !ok {
 		return false
 	}
+	if m.scope.held(task.outboundTag) { //H: held back from every test (SetUntestable)
+		m.logger.Info("MONITORING ", task.outboundTag, ": not tested (", task.reason, "): held back") //H
+		return false                                                                                  //H
+	} //H
 	state.mu.Lock()
 	defer state.mu.Unlock()
 

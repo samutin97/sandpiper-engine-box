@@ -23,6 +23,17 @@ import (
 //     switch is easy to see, HC-10) or "none".
 //   - disable_ipinfo: no IP lookup after a test.
 //
+//   - held back (SetUntestable, not an option: its owner sets it while the box runs): never
+//     tested, whatever asks for it (a cycle, a selection, keep top, a group's test, the outbound's
+//     own test when it comes up, the app). For an outbound a test of which is itself what must not
+//     happen: a last resort that waits for the user's agreement, whose test is a handshake with
+//     its server.
+//
+// Keep top manages only the lazy outbounds the cycles test: never one tested on demand or held
+// back. It took every lazy outbound for its own, and an AmneziaWG last resort (lazy to stay quiet,
+// tested on demand only) was tested by its picks, and even kept, as soon as the ones it kept
+// stopped answering.
+//
 // A hot reload can change on_demand_tags (SetOnDemandTags): the set of proxies of a subscription
 // that no automatic group uses changes with the subscription, and a restart for it dropped every
 // connection. The other fields stay as the box started.
@@ -36,7 +47,8 @@ const (
 type testScope struct {
 	excludeTypes  []string
 	onDemandTypes []string
-	onDemandTags  *atomic.Pointer[[]string] // replaced by a hot reload (SetOnDemandTags)
+	onDemandTags  *atomic.Pointer[[]string]        // replaced by a hot reload (SetOnDemandTags)
+	untestable    *atomic.Pointer[map[string]bool] // held back (SetUntestable)
 	retest        string
 	noIPInfo      bool
 }
@@ -55,6 +67,7 @@ func newTestScope(options option.MonitoringOptions) testScope {
 		excludeTypes:  options.ExcludeTypes,
 		onDemandTypes: options.OnDemandTypes,
 		onDemandTags:  onDemandTags,
+		untestable:    &atomic.Pointer[map[string]bool]{},
 		retest:        retest,
 		noIPInfo:      options.DisableIPInfo,
 	}
@@ -87,6 +100,51 @@ func (s testScope) onDemand(outbound adapter.Outbound) bool {
 	return slices.Contains(s.onDemandTypes, outbound.Type()) || slices.Contains(s.tags(), outbound.Tag())
 }
 
+// held: the outbound is held back from every test (SetUntestable).
+func (s testScope) held(tag string) bool {
+	if s.untestable == nil {
+		return false
+	}
+	held := s.untestable.Load()
+	return held != nil && (*held)[tag]
+}
+
+// outsideKeepTop: an outbound keep top neither keeps nor rests, tests nor names: one tested on
+// demand only, or held back.
+func (s testScope) outsideKeepTop(outbound adapter.Outbound) bool {
+	return s.onDemand(outbound) || s.held(outbound.Tag())
+}
+
+// SetUntestable holds the outbounds of tags back from every test from now on, and lets the others
+// be tested again; nil holds none. The check is where every test is queued (enqueueTask), so no
+// path of the monitoring tests a held one; keep top leaves them out as well. A test of one already
+// running when it is held goes on to its end.
+func (m *OutboundMonitoring) SetUntestable(tags []string) {
+	if m.scope.untestable == nil {
+		return
+	}
+	held := make(map[string]bool, len(tags))
+	for _, tag := range tags {
+		held[tag] = true
+	}
+	m.scope.untestable.Store(&held)
+	m.keepTopRescope()
+}
+
+// keepTopRescope follows a change of what keep top may manage (on demand, held back) in a running
+// keep top.
+func (m *OutboundMonitoring) keepTopRescope() {
+	k := &m.keepTop
+	k.access.Lock()
+	defer k.access.Unlock()
+	registry := m.reg()
+	if !k.on || k.options == nil || registry == nil {
+		return // keepTopStart reads them when it starts
+	}
+	changed := m.keepTopRefreshLocked(registry)
+	m.keepTopStepLocked(topOrder{restart: changed})
+}
+
 // SetOnDemandTags replaces the outbounds tested on demand only by their tag (on_demand_tags) of a
 // running monitoring (hot reload). A tag that leaves the list is tested from the next cycle on; one
 // that joins it is no longer tested in cycles unless a group selects it. Called before Reload of
@@ -97,6 +155,7 @@ func (m *OutboundMonitoring) SetOnDemandTags(tags []string) {
 	}
 	tags = slices.Clone(tags)
 	m.scope.onDemandTags.Store(&tags)
+	m.keepTopRescope()
 }
 
 // selectedTags are the outbounds the groups have selected now.

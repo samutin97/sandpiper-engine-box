@@ -28,6 +28,9 @@ func (m *OutboundMonitoring) parked(tag string, state *outboundState) bool {
 	if _, isLazy := state.outbound.(adapter.LazyOutbound); !isLazy {
 		return false
 	}
+	if m.scope.outsideKeepTop(state.outbound) {
+		return false // not keep top's: the on-demand rules (or the hold) decide alone
+	}
 	active := m.active.Load()
 	if active == nil {
 		return true
@@ -53,8 +56,8 @@ func (m *OutboundMonitoring) setActive(tags []string) []string {
 	changed := false
 	for tag, state := range registry.outbounds {
 		lazy, isLazy := state.outbound.(adapter.LazyOutbound)
-		if !isLazy {
-			continue
+		if !isLazy || m.scope.outsideKeepTop(state.outbound) {
+			continue // not keep top's to wake (a test) or to put to rest
 		}
 		_, isActive := next[tag]
 		wasActive := false
