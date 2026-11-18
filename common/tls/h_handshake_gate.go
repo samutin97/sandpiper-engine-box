@@ -155,17 +155,19 @@ func SetHandshakeGate(options *option.HandshakeGateOptions) {
 func DialForHandshake(ctx context.Context, dialer N.Dialer, destination M.Socksaddr) (net.Conn, error) {
 	gate := activeGate.Load()
 	if gate == nil {
-		return dialer.DialContext(ctx, N.NetworkTCP, destination)
+		return traceConnect(ctx, dialer, destination)
 	}
 	if !destination.IsIP() && destination.Fqdn != "" && !throughDetour(dialer) {
 		return gate.dialName(ctx, dialer, destination)
 	}
-	end, err := gate.enter(ctx, gate.destinationKey(destination))
+	key := gate.destinationKey(destination)
+	end, err := gate.enter(ctx, key)
 	if err != nil {
 		return nil, err
 	}
-	conn, err := dialer.DialContext(ctx, N.NetworkTCP, destination)
+	conn, err := traceConnect(ctx, dialer, destination)
 	if err != nil {
+		countConnectFailed(key)
 		end()
 		return nil, err
 	}
@@ -182,6 +184,7 @@ func DialForHandshake(ctx context.Context, dialer N.Dialer, destination M.Socksa
 func enterHandshake(ctx context.Context, conn net.Conn, serverName string) (func(), error) {
 	gate := activeGate.Load()
 	if gate == nil || conn == nil {
+		traceHello(ctx)
 		return func() {}, nil
 	}
 	key := gate.addressKey(conn.RemoteAddr())
@@ -191,6 +194,7 @@ func enterHandshake(ctx context.Context, conn net.Conn, serverName string) (func
 			ticket.done()
 			return nil, err
 		}
+		traceHello(ctx)
 		return ticket.done, nil
 	}
 	end, err := gate.enter(ctx, key)
@@ -201,6 +205,7 @@ func enterHandshake(ctx context.Context, conn net.Conn, serverName string) (func
 		end()
 		return nil, err
 	}
+	traceHello(ctx)
 	return end, nil
 }
 
@@ -220,8 +225,9 @@ func (g *handshakeGate) dialName(ctx context.Context, dialer N.Dialer, destinati
 	if err != nil {
 		return nil, err
 	}
-	conn, err := dialer.DialContext(ctx, N.NetworkTCP, destination)
+	conn, err := traceConnect(ctx, dialer, destination)
 	if err != nil {
+		countConnectFailed(key)
 		g.leave(key)
 		return nil, err
 	}
@@ -248,6 +254,7 @@ func (g *handshakeGate) dialName(ctx context.Context, dialer N.Dialer, destinati
 // domain itself, and returns where it was taken. A dial that waits looks the address up again
 // each time it wakes: one the domain's first connect reveals meanwhile takes over.
 func (g *handshakeGate) enterName(ctx context.Context, name gateKey) (gateKey, error) {
+	var waits gateWaits
 	for {
 		g.access.Lock()
 		key := name
@@ -257,17 +264,20 @@ func (g *handshakeGate) enterName(ctx context.Context, name gateKey) (gateKey, e
 		state := g.state(key)
 		now := time.Now()
 		wait := state.startGap - now.Sub(state.lastStart)
-		if windowWait := g.windowWait(state, now); windowWait > wait {
+		windowWait := g.windowWait(state, now)
+		if windowWait > wait {
 			wait = windowWait
 		}
 		if state.inflight < g.maxInflight && wait <= 0 {
 			g.take(state, now)
 			g.access.Unlock()
+			waits.taken(ctx, key)
 			return key, nil
 		}
 		changed := state.changed
 		full := state.inflight >= g.maxInflight
 		g.access.Unlock()
+		waits.wait(full, windowWait > 0 && windowWait >= wait)
 		if err := g.sleep(ctx, changed, full, wait); err != nil {
 			return gateKey{}, err
 		}
@@ -306,6 +316,7 @@ func (g *handshakeGate) reached(name, key, address gateKey) bool {
 		return false
 	}
 	g.take(g.state(address), now)
+	countTurn(address, 0, false, false)
 	return true
 }
 
@@ -428,12 +439,14 @@ func (g *handshakeGate) windowWait(state *gateState, now time.Time) time.Duratio
 // enter takes a turn of the server: fewer than maxInflight taken, the gap since the last one,
 // and fewer than windowMax in the window.
 func (g *handshakeGate) enter(ctx context.Context, key gateKey) (func(), error) {
+	var waits gateWaits
 	for {
 		g.access.Lock()
 		state := g.state(key)
 		now := time.Now()
 		wait := state.startGap - now.Sub(state.lastStart)
-		if windowWait := g.windowWait(state, now); windowWait > wait {
+		windowWait := g.windowWait(state, now)
+		if windowWait > wait {
 			wait = windowWait
 		}
 		if state.inflight < g.maxInflight && wait <= 0 {
@@ -444,12 +457,14 @@ func (g *handshakeGate) enter(ctx context.Context, key gateKey) (func(), error) 
 				state.starts = append(state.starts, now)
 			}
 			g.access.Unlock()
+			waits.taken(ctx, key)
 			var once sync.Once
 			return func() { once.Do(func() { g.leave(key) }) }, nil
 		}
 		changed := state.changed
 		full := state.inflight >= g.maxInflight
 		g.access.Unlock()
+		waits.wait(full, windowWait > 0 && windowWait >= wait)
 		if err := g.sleep(ctx, changed, full, wait); err != nil {
 			return nil, err
 		}
@@ -467,6 +482,7 @@ func (g *handshakeGate) waitHello(ctx context.Context, key gateKey) error {
 			state.lastHello = now
 			state.helloGap = g.gap()
 			g.access.Unlock()
+			countHello(key)
 			return nil
 		}
 		g.access.Unlock()
