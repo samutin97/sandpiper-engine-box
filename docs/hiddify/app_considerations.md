@@ -311,6 +311,11 @@ do about it. Items marked **Required** break or misbehave until they are handled
 - **Handshake gate: naive too (`1acadc893`).** The naive outbound's handshakes (made by cronet)
   take their turn in the gate. Their end is not seen, so the turn lasts
   `experimental.handshake_gate.unseen_hold` after the connect (1s when unset).
+- **Hot reload: on_demand_tags changes in place (`81ce5a555`).** A subscription update that changes
+  which proxies no automatic group uses (new UDP variants, another last resort in the ranking) is
+  now a hot reload: `HotReloadResult.OnDemand` says the list changed. Before, it failed with
+  `hot reload cannot change: experimental.monitoring.on_demand_tags` and the caller restarted the
+  box. The rest of `experimental.monitoring` still cannot change in a hot reload.
 - **Handshake gate: counts and a dial's trace (`6a7c35b75`).** `tls.TakeHandshakeGateStats()`
   returns, for each server key the gate counts by (`address/bits`, or a domain it knew no address
   for), the turns taken, how many waited and for what (`Full`: a place in `max_inflight`,
