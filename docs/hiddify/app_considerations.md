@@ -308,6 +308,16 @@ do about it. Items marked **Required** break or misbehave until they are handled
   shares the gate's queue with its address and its other domains: after its first connect the
   gate knows the address and paces the dials by that domain there. Nothing to set; a profile that
   gives one server by address and by domain no longer gets twice the handshakes.
+- **Handshake gate: naive too (`1acadc893`).** The naive outbound's handshakes (made by cronet)
+  take their turn in the gate. Their end is not seen, so the turn lasts
+  `experimental.handshake_gate.unseen_hold` after the connect (1s when unset).
+- **System proxy on Windows puts back the previous one (`5942fb8d3`).** Turning the system proxy
+  off restores another program's proxy settings that were on before it (server, exceptions) if
+  that proxy still answers a TCP connect within `experimental.system_proxy.restore_check_timeout`
+  (1s when unset); otherwise it turns the system proxy off as before. This holds for an inbound's
+  `set_system_proxy` and for `settings.NewSystemProxy` used directly. A core that is killed still
+  leaves the system proxy at its closed port until the next start turns it off (the previous
+  settings are kept in memory only).
 - **TUN DNS address (`ff8ef53a8`).** Only UDP port 53 of the TUN's DNS address is hijacked as DNS;
   a datagram to another port goes through the route rules (hiddify-core rejects the TUN subnet
   there).
