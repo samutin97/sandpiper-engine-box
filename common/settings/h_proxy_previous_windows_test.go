@@ -114,12 +114,40 @@ func TestH_SystemProxyOffAsBefore(t *testing.T) {
 			t.Fatalf("%s: %+v, asked %v, calls %v", name, store.settings, store.asked, store.calls)
 		}
 	}
-	// a Disable without an Enable (the cleanup after a core that was killed) turns it off, as before
-	store := &fakeProxyStore{settings: windowsProxySettings{Enabled: true, Server: "127.0.0.1:2080"}, answering: map[string]bool{"127.0.0.1:2080": true}}
-	useFakeProxyStore(t, store)
-	proxy, _ := NewSystemProxy(context.Background(), M.ParseSocksaddr("127.0.0.1:2081"), true, nil)
-	if err := proxy.Disable(); err != nil || store.settings.Enabled {
-		t.Fatalf("cleanup: %v, %+v", err, store.settings)
+}
+
+// The cleanup after a core that was killed with its system proxy on (a Disable without an Enable)
+// turned the system proxy off whatever it was: another program that took it since (the user
+// started their other proxy client again) lost it at our start. Now only a system proxy that is
+// on and still ours is turned off.
+func TestH_SystemProxyCleanupTurnsOffOnlyOurs(t *testing.T) {
+	cleanup := func(store *fakeProxyStore) {
+		t.Helper()
+		useFakeProxyStore(t, store)
+		proxy, err := NewSystemProxy(context.Background(), M.ParseSocksaddr("127.0.0.1:2081"), true, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := proxy.Disable(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ours := &fakeProxyStore{settings: windowsProxySettings{Enabled: true, Server: "http://127.0.0.1:2081", Bypass: "<local>"}}
+	cleanup(ours)
+	if ours.settings.Enabled || !reflect.DeepEqual(ours.calls, []string{"clear"}) {
+		t.Fatalf("ours left on: %+v, calls %v", ours.settings, ours.calls)
+	}
+	for name, store := range map[string]*fakeProxyStore{
+		"another program's": {settings: windowsProxySettings{Enabled: true, Server: "127.0.0.1:2080", Bypass: "localhost;<local>"}},
+		"per protocol":      {settings: windowsProxySettings{Enabled: true, Server: "http=127.0.0.1:2080;https=127.0.0.1:2080"}},
+		"off, ours":         {settings: windowsProxySettings{Server: "http://127.0.0.1:2081"}},
+		"unreadable":        {readErr: errors.New("denied")},
+	} {
+		before := store.settings
+		cleanup(store)
+		if store.settings != before || len(store.calls) != 0 || len(store.asked) != 0 {
+			t.Fatalf("%s: %+v, calls %v, asked %v", name, store.settings, store.calls, store.asked)
+		}
 	}
 }
 

@@ -86,20 +86,38 @@ func (wininetProxyStore) Answers(address string, timeout time.Duration) bool {
 // put back: the system proxy is off, unreadable, or already ours (one we left on before).
 func rememberPrevious(ours M.Socksaddr) *windowsProxySettings {
 	previous, err := windowsProxy.Read()
-	if err != nil || !previous.Enabled || strings.TrimSpace(previous.Server) == "" {
+	if err != nil || !previous.Enabled || strings.TrimSpace(previous.Server) == "" || pointsAt(previous.Server, ours) {
 		return nil
-	}
-	for _, address := range proxyServerAddresses(previous.Server) {
-		if strings.EqualFold(address, ours.String()) {
-			return nil
-		}
 	}
 	return &previous
 }
 
+// pointsAt reports whether a ProxyServer value names address.
+func pointsAt(server string, address M.Socksaddr) bool {
+	for _, entry := range proxyServerAddresses(server) {
+		if strings.EqualFold(entry, address.String()) {
+			return true
+		}
+	}
+	return false
+}
+
 // restorePrevious turns our system proxy off: back to the previous settings if their proxy
 // answers, else off.
+//
+// A Disable without an Enable of the same proxy is the cleanup after a core that was killed with
+// its system proxy on (hiddify-core, from its marker). The system proxy may have been taken by
+// another program since (the user started their other proxy client again): it is turned off only
+// while it is on and still points at this address; otherwise, or when it cannot be read, nothing
+// changes.
 func (p *WindowsSystemProxy) restorePrevious() error {
+	if !p.isEnabled {
+		current, err := windowsProxy.Read()
+		if err != nil || !current.Enabled || !pointsAt(current.Server, p.serverAddr) {
+			return nil
+		}
+		return windowsProxy.Clear()
+	}
 	previous := p.previous
 	p.previous = nil
 	if previous != nil {
