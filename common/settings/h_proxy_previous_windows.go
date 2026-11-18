@@ -103,7 +103,9 @@ func pointsAt(server string, address M.Socksaddr) bool {
 }
 
 // restorePrevious turns our system proxy off: back to the previous settings if their proxy
-// answers, else off.
+// answers, else off. If another program took the system proxy while ours was on (it is on and
+// points elsewhere), nothing changes and the previous settings are not put back; settings that
+// cannot be read do not stop it.
 //
 // A Disable without an Enable of the same proxy is the cleanup after a core that was killed with
 // its system proxy on (hiddify-core, from its marker). The system proxy may have been taken by
@@ -120,6 +122,10 @@ func (p *WindowsSystemProxy) restorePrevious() error {
 	}
 	previous := p.previous
 	p.previous = nil
+	if current, err := windowsProxy.Read(); err == nil && current.Enabled && !pointsAt(current.Server, p.serverAddr) {
+		// another program took the system proxy while ours was on: it owns the settings now
+		return nil
+	}
 	if previous != nil {
 		if addresses := proxyServerAddresses(previous.Server); len(addresses) > 0 && windowsProxy.Answers(addresses[0], restoreCheckTimeout()) {
 			return windowsProxy.Set(previous.Server, previous.Bypass)

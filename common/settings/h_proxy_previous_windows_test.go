@@ -116,6 +116,43 @@ func TestH_SystemProxyOffAsBefore(t *testing.T) {
 	}
 }
 
+// Another program took the system proxy while ours was on (the user started their other proxy
+// client): turning ours off turned theirs off, or put back the settings from before ours. Now
+// their settings stay; settings that cannot be read do not stop the restore.
+func TestH_SystemProxyLeavesAProxyTakenMeanwhile(t *testing.T) {
+	previous := windowsProxySettings{Enabled: true, Server: "127.0.0.1:2080", Bypass: "localhost;<local>"}
+	for name, taken := range map[string]windowsProxySettings{
+		"another program":  {Enabled: true, Server: "127.0.0.1:2090", Bypass: "<local>"},
+		"the previous one": previous,
+		"per protocol":     {Enabled: true, Server: "http=127.0.0.1:2090;https=127.0.0.1:2090"},
+	} {
+		store := &fakeProxyStore{settings: previous, answering: map[string]bool{"127.0.0.1:2080": true, "127.0.0.1:2090": true}}
+		useFakeProxyStore(t, store)
+		proxy, _ := NewSystemProxy(context.Background(), M.ParseSocksaddr("127.0.0.1:2081"), true, nil)
+		if err := proxy.Enable(); err != nil {
+			t.Fatal(err)
+		}
+		store.settings = taken
+		if err := proxy.Disable(); err != nil {
+			t.Fatal(err)
+		}
+		if store.settings != taken || len(store.calls) != 1 || len(store.asked) != 0 {
+			t.Fatalf("%s: %+v, calls %v, asked %v", name, store.settings, store.calls, store.asked)
+		}
+	}
+	// unreadable at the end: as before, the previous settings come back
+	store := &fakeProxyStore{settings: previous, answering: map[string]bool{"127.0.0.1:2080": true}}
+	useFakeProxyStore(t, store)
+	proxy, _ := NewSystemProxy(context.Background(), M.ParseSocksaddr("127.0.0.1:2081"), true, nil)
+	if err := proxy.Enable(); err != nil {
+		t.Fatal(err)
+	}
+	store.readErr = errors.New("denied")
+	if err := proxy.Disable(); err != nil || store.settings != previous {
+		t.Fatalf("unreadable: %v, %+v", err, store.settings)
+	}
+}
+
 // The cleanup after a core that was killed with its system proxy on (a Disable without an Enable)
 // turned the system proxy off whatever it was: another program that took it since (the user
 // started their other proxy client again) lost it at our start. Now only a system proxy that is
