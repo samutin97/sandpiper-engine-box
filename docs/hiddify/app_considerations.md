@@ -311,6 +311,12 @@ do about it. Items marked **Required** break or misbehave until they are handled
 - **Handshake gate: naive too (`1acadc893`).** The naive outbound's handshakes (made by cronet)
   take their turn in the gate. Their end is not seen, so the turn lasts
   `experimental.handshake_gate.unseen_hold` after the connect (1s when unset).
+- **Monitoring: held-back outbounds, and keep top without the on-demand ones (`fb46d82ab`).**
+  `OutboundMonitoring.SetUntestable(tags)` holds outbounds back from every test until it is called
+  again without them: hiddify-core holds the last resorts that wait for the user's agreement, at the
+  start of a config, around a hot reload and whenever an agreement is given or ends. Keep top no
+  longer manages lazy outbounds tested on demand only (`on_demand_tags`, `on_demand_types`): they
+  never rest and are never taken out of rest by it, and its count is of the others only.
 - **Hot reload: on_demand_tags changes in place (`81ce5a555`).** A subscription update that changes
   which proxies no automatic group uses (new UDP variants, another last resort in the ranking) is
   now a hot reload: `HotReloadResult.OnDemand` says the list changed. Before, it failed with
