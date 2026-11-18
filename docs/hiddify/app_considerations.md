@@ -304,6 +304,10 @@ do about it. Items marked **Required** break or misbehave until they are handled
   uniformly in `[min_gap, max_gap]`) and `window` + `window_max` (at most `window_max`
   handshakes start to a server in any `window`). Both are off when unset, so the gate paces as
   before. hiddify-core sets the values it wants explicitly.
+- **Handshake gate: a domain counts at its address (`64679cefc`).** A server dialed by domain
+  shares the gate's queue with its address and its other domains: after its first connect the
+  gate knows the address and paces the dials by that domain there. Nothing to set; a profile that
+  gives one server by address and by domain no longer gets twice the handshakes.
 - **TUN DNS address (`ff8ef53a8`).** Only UDP port 53 of the TUN's DNS address is hijacked as DNS;
   a datagram to another port goes through the route rules (hiddify-core rejects the TUN subnet
   there).
