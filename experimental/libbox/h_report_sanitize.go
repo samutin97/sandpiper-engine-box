@@ -36,8 +36,10 @@ var reportScrubbers = []struct {
 	{regexp.MustCompile(`(?i)\b(https?|wss?)://([^/\s"'<>?#]+)[^\s"'<>]*`), "$1://<host>"},
 	{regexp.MustCompile(`(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b`), "<uuid>"},
 	{regexp.MustCompile(`(?i)\b[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}\b`), "<email>"},
+	// the other subscription of a profile's pair: its link in base64url, which starts the same for any https link
+	{regexp.MustCompile(`\baHR0cHM6Ly[A-Za-z0-9_+/-]*=*`), "<link>"},
 	// secrets written as key=value or "key": "value"
-	{regexp.MustCompile(`(?i)\b(password|passwd|token|auth[_-]?token|secret|private[_-]?key|preshared[_-]?key|psk|key|cookie|license|uuid)(["']?\s*[:=]\s*["']?)[^\s"',;&]+`), "$1$2<redacted>"},
+	{regexp.MustCompile(`(?i)\b(password|passwd|token|auth[_-]?token|secret|private[_-]?key|preshared[_-]?key|psk|key|cookie|license|uuid|alt[_-]url)(["']?\s*[:=]\s*["']?)[^\s"',;&]+`), "$1$2<redacted>"},
 	{regexp.MustCompile(`\b(?:\d{1,3}\.){3}\d{1,3}\b`), "<ipv4>"},
 	// MAC addresses, as the BSSID of a Wi-Fi network, before IPv6, whose candidates they look like
 	{regexp.MustCompile(`(?i)\b(?:[0-9a-f]{2}[:-]){5}[0-9a-f]{2}\b`), "<mac>"},

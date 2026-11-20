@@ -44,3 +44,19 @@ func TestH_SanitizeReportHidesDomains(t *testing.T) {
 		require.Equal(t, expected, string(sanitizeReportText([]byte(input))), input)
 	}
 }
+
+// The other subscription of a profile's pair is a secret like the profile's own link: in a report it
+// goes, under its key or alone.
+func TestH_SanitizeReportHidesThePairLink(t *testing.T) {
+	const link = "aHR0cHM6Ly9leGFtcGxlLm9yZy9zdWIvd2FycC10b2tlbg"
+	for _, input := range []string{
+		"profile-exits: v=1;cur=main;alt=warp;alt-url=" + link,
+		`{"alt-url": "` + link + `"}`,
+		"alt_url=" + link,
+		"the other one is " + link + " now",
+	} {
+		output := string(sanitizeReportText([]byte(input)))
+		require.NotContains(t, output, link, input)
+		require.NotContains(t, output, "aHR0cHM6", input)
+	}
+}
